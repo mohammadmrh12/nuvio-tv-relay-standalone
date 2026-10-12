@@ -20,16 +20,13 @@ import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.Executors
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RelaySyncService : Service() {
-    companion object { const val ACTION_FORCE_SYNC = "com.nuvio.tv.relay.standalone.FORCE_SYNC" }
     private val handler = Handler(Looper.getMainLooper())
-    // Parallel warmup prevents one slow image from blocking the entire launcher row.
-    private val artworkExecutor = Executors.newFixedThreadPool(3)
-    private val artworkInFlight = ConcurrentHashMap.newKeySet<String>()
-    private val busy = AtomicBoolean(false)
+    private val artworkExecutor = Executors.newSingleThreadExecutor()
+    private val artworkWarmupRunning = AtomicBoolean(false)
+    private var busy = false
     override fun onCreate() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 26) {
@@ -43,26 +40,27 @@ class RelaySyncService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         enforceArtworkLayoutVersion()
-        if (intent?.action == ACTION_FORCE_SYNC) {
-            val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-            prefs.edit().putString("sync_status", "running").putString("sync_error", "").apply()
-            Thread { syncNow(forceRefresh = true) }.start()
-        }
         handler.removeCallbacks(tick)
         handler.post(tick)
         return START_STICKY
     }
 
-    /** Non-destructive artwork migration: retain working launcher rows and cached images.
-     * New hero descriptors naturally create fresh files; rows are replaced only as each
-     * catalog is successfully refreshed, so a temporary network/image failure cannot blank the launcher.
-     */
+    /** One-time migration: discard every previously published relay artwork URI and cached composite. */
     private fun enforceArtworkLayoutVersion() {
         val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-        val currentVersion = 17
+        val currentVersion = 15
         if (prefs.getInt("artwork_layout_version", 0) >= currentVersion) return
+        runCatching {
+            existingIds().forEach { id -> deleteRelay(id) }
+        }
+        runCatching {
+            File(cacheDir, "poster-cache").listFiles()?.forEach { file ->
+                if (file.isFile) file.delete() else file.deleteRecursively()
+            }
+        }
         prefs.edit()
             .putInt("artwork_layout_version", currentVersion)
+            .putInt("service_rotation_index", 0)
             .apply()
     }
     private val tick = object : Runnable {
@@ -70,21 +68,20 @@ class RelaySyncService : Service() {
             if (!getSharedPreferences("relay", MODE_PRIVATE).getBoolean("auto_sync", true)) {
                 stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return
             }
-            if (!busy.get()) Thread { syncNow() }.start()
+            if (!busy) Thread { syncNow() }.start()
             handler.postDelayed(this, 15 * 1000L)
         }
     }
-    private fun syncNow(forceRefresh: Boolean = false) {
-        if (!busy.compareAndSet(false, true)) return
-        val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-        prefs.edit().putString("sync_status", "running").putString("sync_error", "").apply()
+    private fun syncNow() {
+        if (busy) return
+        busy = true
         try {
+            val prefs = getSharedPreferences("relay", MODE_PRIVATE)
             val addons = prefs.getStringSet("addons", emptySet()) ?: emptySet()
             val selected = prefs.getStringSet("selected", emptySet()) ?: emptySet()
             val candidates = mutableListOf<Triple<String, JSONObject, String>>()
-            var manifestsLoaded = 0
             for (addon in addons) {
-                val manifest = try { json(addon, forceNetwork = forceRefresh).also { manifestsLoaded++ } } catch (_: Exception) { continue }
+                val manifest = try { json(addon) } catch (_: Exception) { continue }
                 val cats = manifest.optJSONArray("catalogs") ?: continue
                 for (i in 0 until cats.length()) {
                     val c = cats.optJSONObject(i) ?: continue
@@ -96,24 +93,7 @@ class RelaySyncService : Service() {
                     }
                 }
             }
-            // Do not interpret a network failure as catalog removal. Only reconcile stale rows
-            // when every currently configured add-on manifest was read successfully.
-            val failedManifests = addons.size - manifestsLoaded
-            // Continue rotating any reachable catalogs even if one add-on is unavailable.
-            // When none can be read, preserve the launcher row and report the failure.
-            if (candidates.isEmpty() && failedManifests > 0) {
-                prefs.edit().putString("sync_status", "failed")
-                    .putString("sync_error", "$failedManifests of ${addons.size} add-on manifests failed to load; existing launcher rows were kept. Automatic retry is enabled.").apply()
-                return
-            }
-            if (candidates.isEmpty()) {
-                val native = readNativeContinueWatching().firstOrNull()
-                existingIds().filter { it != "nuvio_relay_pinned_native_first" }.forEach { deleteRelay(it) }
-                native?.let { publish(it, pinnedFirst = true) } ?: deleteRelay("nuvio_relay_pinned_native_first")
-                prefs.edit().putLong("last_successful_sync", System.currentTimeMillis())
-                    .putString("sync_status", "success").putString("sync_error", "").apply()
-                return
-            }
+            if (candidates.isEmpty()) return
             // Stable ordering keeps the persisted cursor aligned with the user's selected catalogs.
             candidates.sortBy { "${it.second.optString("name")}|${it.first}|${it.second.optString("type")}|${it.second.optString("id")}" }
             // Background sync rotates the published catalog and persists the cursor across restarts.
@@ -124,11 +104,7 @@ class RelaySyncService : Service() {
             val id = catalog.optString("id")
             val base = addon.removeSuffix("/manifest.json").trimEnd('/')
             val url = "$base/catalog/${enc(type)}/${enc(id)}.json?skip=0&limit=100"
-            val metas = try { json(url, forceNetwork = forceRefresh).optJSONArray("metas") } catch (e: Exception) {
-                prefs.edit().putString("sync_status", "failed")
-                    .putString("sync_error", "Catalog load failed: ${e.message ?: e.javaClass.simpleName}; will retry automatically.").apply()
-                null
-            } ?: return
+            val metas = try { json(url).optJSONArray("metas") } catch (_: Exception) { null } ?: return
             val all = linkedMapOf<String, JSONObject>()
             for (j in 0 until metas.length()) {
                 val m = metas.optJSONObject(j) ?: continue
@@ -146,28 +122,24 @@ class RelaySyncService : Service() {
                 firstNative != null && it.optString("type").equals(firstNative.optString("type"), true) &&
                     it.optString("id") == firstNative.optString("id")
             }.take(if (firstNative != null) 49 else 50)
-            // Warm the first launcher-visible items first, then continue through the rest in background.
-            // The in-flight set prevents duplicate downloads when the 15-second sync tick repeats.
-            wanted.forEachIndexed { index, item ->
-                val background = highestResolutionImage(item.optString("background"))
-                    ?: highestResolutionImage(item.optString("poster"))
-                if (background.isNullOrBlank()) return@forEachIndexed
-                val art = PosterCacheProvider.heroUriFor(
-                    this, background,
-                    highestResolutionImage(item.optString("titleLogo")),
-                    item.optString("rating")
-                ) ?: return@forEachIndexed
-                val key = art.lastPathSegment ?: return@forEachIndexed
-                if (!artworkInFlight.add(key)) return@forEachIndexed
+            // One background worker warms each selected catalog without spawning threads every 15 seconds.
+            if (artworkWarmupRunning.compareAndSet(false, true)) {
                 artworkExecutor.execute {
                     try {
-                        // Give the top row priority. Remaining artwork is queued in catalog order.
-                        if (index >= 12) Thread.sleep(150L)
-                        contentResolver.openFileDescriptor(art, "r")?.use { }
-                    } catch (_: Exception) {
-                        // Keep failures retryable on the next background sync tick.
+                        wanted.forEach { item ->
+                            runCatching {
+                                val background = highestResolutionImage(item.optString("background"))
+                                    ?: highestResolutionImage(item.optString("poster"))
+                                val art = PosterCacheProvider.heroUriFor(
+                                    this, background,
+                                    highestResolutionImage(item.optString("titleLogo")),
+                                    item.optString("rating")
+                                )
+                                if (art != null) contentResolver.openFileDescriptor(art, "r")?.use { }
+                            }
+                        }
                     } finally {
-                        artworkInFlight.remove(key)
+                        artworkWarmupRunning.set(false)
                     }
                 }
             }
@@ -176,15 +148,7 @@ class RelaySyncService : Service() {
             existingIds().filter { it !in wantedIds }.forEach { deleteRelay(it) }
             wanted.forEachIndexed { index, item -> publish(item, topOfCatalog = index == 0) }
             firstNative?.let { publish(it, pinnedFirst = true) }
-            val editor = prefs.edit().putLong("last_successful_sync", System.currentTimeMillis())
-            if (failedManifests > 0) editor.putString("sync_status", "partial")
-                .putString("sync_error", "$failedManifests of ${addons.size} add-on manifests unavailable; reachable catalogs are still rotating and failed add-ons will be retried automatically.")
-            else editor.putString("sync_status", "success").putString("sync_error", "")
-            editor.apply()
-        } catch (e: Exception) {
-            prefs.edit().putString("sync_status", "failed")
-                .putString("sync_error", e.message ?: e.javaClass.simpleName).apply()
-        } finally { busy.set(false) }
+        } finally { busy = false }
     }
     private fun publish(m: JSONObject, pinnedFirst: Boolean = false, topOfCatalog: Boolean = false) {
         val type = m.optString("type"); val id = m.optString("id")
@@ -249,29 +213,21 @@ class RelaySyncService : Service() {
         } catch (_: Exception) { }
         return out.distinctBy { it.optString("type").lowercase() + ":" + it.optString("id") }
     }
-    private fun json(url: String, forceNetwork: Boolean = false): JSONObject {
+    private fun json(url: String): JSONObject {
         val dir = File(cacheDir, "api-cache").apply { mkdirs() }
         val hash = MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
         val f = File(dir, "$hash.json")
         val ttl = if (url.contains("/catalog/")) 15 * 60 * 1000L else 24 * 60 * 60 * 1000L
-        if (!forceNetwork && f.exists() && System.currentTimeMillis() - f.lastModified() < ttl) try { return JSONObject(f.readText()) } catch (_: Exception) {}
-        var lastError: Exception? = null
-        repeat(2) { attempt ->
+        if (f.exists() && System.currentTimeMillis() - f.lastModified() < ttl) try { return JSONObject(f.readText()) } catch (_: Exception) {}
+        try {
+            val c = URL(url).openConnection() as HttpURLConnection
+            c.connectTimeout = 8000; c.readTimeout = 10000; c.setRequestProperty("Accept", "application/json")
             try {
-                val c = URL(url).openConnection() as HttpURLConnection
-                c.connectTimeout = 4500; c.readTimeout = 6000; c.setRequestProperty("Accept", "application/json")
-                try {
-                    if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
-                    val body = c.inputStream.bufferedReader().use { it.readText() }
-                    val parsed = JSONObject(body); runCatching { f.writeText(body) }; return parsed
-                } finally { c.disconnect() }
-            } catch (e: Exception) {
-                lastError = e
-                if (attempt == 0) Thread.sleep(250)
-            }
-        }
-        if (f.exists()) try { return JSONObject(f.readText()) } catch (_: Exception) {}
-        throw (lastError ?: IllegalStateException("Network request failed"))
+                if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
+                val body = c.inputStream.bufferedReader().use { it.readText() }
+                val parsed = JSONObject(body); runCatching { f.writeText(body) }; return parsed
+            } finally { c.disconnect() }
+        } catch (e: Exception) { if (f.exists()) try { return JSONObject(f.readText()) } catch (_: Exception) {}; throw e }
     }
     private fun highestResolutionImage(raw: String?): String? {
         if (raw.isNullOrBlank() || !raw.startsWith("http")) return null
