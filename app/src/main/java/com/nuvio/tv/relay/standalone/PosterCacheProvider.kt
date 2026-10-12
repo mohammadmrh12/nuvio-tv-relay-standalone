@@ -173,7 +173,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v15-tight-metadata-lowered|$background|${logo.orEmpty()}|${rating.orEmpty()}"
+            val descriptor = "hero-v16-title-fallback-fix|$background|${logo.orEmpty()}|${rating.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

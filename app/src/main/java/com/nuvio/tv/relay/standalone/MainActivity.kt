@@ -557,7 +557,7 @@ class MainActivity : Activity() {
                         val item = Item(id, type, name,
                             m.optString("poster").takeIf { it.startsWith("http") },
                             m.optString("background").takeIf { it.startsWith("http") }, c.platformLogo,
-                            m.optString("logo").takeIf { it.startsWith("http") }, ratingLabel(m))
+                            m.optString("logo").takeIf { it.startsWith("http") }, ratingAndYear(m, type))
                         all.putIfAbsent(type.lowercase() + ":" + id, item)
                     }
                 }
@@ -591,7 +591,7 @@ class MainActivity : Activity() {
         val builder = WatchNextProgram.Builder()
             .setType(programType)
             .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_WATCHLIST)
-            .setTitle(item.name)
+            .setTitle(if (pinnedFirst) item.name else "")
             .setLastEngagementTimeUtcMillis(if (pinnedFirst) System.currentTimeMillis() + 86_400_000L else System.currentTimeMillis() - 60_000L)
             .setInternalProviderId(internalId)
             // Store the full Android intent URI so Google TV launches the exact nuvio:// deep link.
@@ -652,14 +652,25 @@ class MainActivity : Activity() {
             match.groupValues[1] + "original" + match.groupValues[3]
         }
     }
-    private fun ratingLabel(m: JSONObject): String {
-        val imdb = m.optString("imdbRating").trim()
-        if (imdb.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (imdb.toDoubleOrNull()?.let { it in 0.0..10.0 } == true)) return "IMDb ★ $imdb"
-        val generic = m.optString("rating").trim()
-        if (generic.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (generic.toDoubleOrNull()?.let { it in 0.0..10.0 } == true)) return "★ $generic"
-        val votes = m.optDouble("vote_average", -1.0)
-        if (votes in 0.0..10.0) return "TMDB ★ " + String.format(java.util.Locale.US, "%.1f", votes)
-        return ""
+    private fun ratingAndYear(m: JSONObject, type: String): String {
+        val score = sequenceOf(m.optString("imdbRating"), m.optString("rating"))
+            .map { it.trim() }
+            .firstOrNull { it.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (it.toDoubleOrNull()?.let { n -> n in 0.0..10.0 } == true) }
+            ?: m.optDouble("vote_average", -1.0).takeIf { it in 0.0..10.0 }
+                ?.let { String.format(java.util.Locale.US, "%.1f", it) }
+        val yearSource = sequenceOf(m.optString("year"), m.optString("releaseInfo"), m.optString("released"))
+            .firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
+        val year = yearSource?.let { Regex("(19|20)\\d{2}").find(it)?.value }
+        val genres = m.optJSONArray("genres")
+        val genreNames = mutableListOf<String>()
+        if (genres != null) for (i in 0 until minOf(genres.length(), 2)) {
+            val genre = genres.optString(i).trim()
+            if (genre.isNotBlank() && genre !in genreNames) genreNames.add(genre)
+        }
+        val details = mutableListOf(if (type.equals("series", true) || type.equals("tv", true) || type.equals("show", true)) "Series" else "Movie")
+        details.addAll(genreNames)
+        val badge = listOfNotNull(score?.let { "★ $it" }, year).joinToString("  ·  ")
+        return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""
     }
     private fun relayId(item: Item) = "nuvio_relay_" + item.type.lowercase() + "_" + item.id
     private fun normalize(raw: String): String {
