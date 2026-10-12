@@ -26,9 +26,13 @@ Launcher discussion: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuLrm
 
 ![Fresh real-device Liquid Launcher TV screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-home-real.png)
 
-![Hero artwork with title logo and rating metadata composited into the image](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-hero-logo-metadata.png)
+![Alternative Liquid Launcher TV home screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-home-alt.png)
 
-![Title details screen with synopsis and metadata](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/nuvio-title-detail-real.png)
+![Liquid Launcher TV poster row](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-poster-row.png)
+
+![Liquid Launcher TV second poster row](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-second-row.png)
+
+![Hero artwork with title logo and rating metadata composited into the image](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-hero-logo-metadata.png)
 
 ![Nuvio TV Relay app](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/relay-app.jpg)
 
