@@ -8,6 +8,10 @@
 4. Switch to Nuvio TV Relay and select **Connect**.
 5. Wait for the catalog library and synchronization to finish.
 
+## Recommended launcher
+
+The screenshots and recommended setup use **Liquid Launcher TV**. Launcher discussion: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuLrm
+
 ## If catalogs do not appear
 
 - Confirm both apps are installed on the same TV.
@@ -21,4 +25,4 @@
 - It does not replace or patch Nuvio Re-Shaped.
 - It does not play streams or resolve playable stream URLs.
 - It does not transcode video.
-- It cannot guarantee that every launcher displays Watch Next/recommendation items.
+- It cannot guarantee that every launcher displays Watch Next / recommendation items.

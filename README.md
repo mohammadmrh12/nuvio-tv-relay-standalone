@@ -1,6 +1,6 @@
 # Nuvio TV Relay (Standalone)
 
-A companion Android TV / Google TV app for syncing supported catalogs into Nuvio Re-Shaped's TV recommendations/Watch Next surface.
+A companion Android TV / Google TV app for syncing supported catalogs into Nuvio Re-Shaped's TV recommendations / Watch Next surface.
 
 **This is a separate companion app. It does not replace, patch, or modify Nuvio Re-Shaped.**
 
@@ -8,26 +8,27 @@ A companion Android TV / Google TV app for syncing supported catalogs into Nuvio
 
 ## Screenshots
 
-### Relay app
+### Liquid Launcher TV — home screen and poster rows
+![Liquid Launcher TV home screen](docs/screenshots/liquid-launcher-home.jpg)
+
+### Nuvio TV Relay app
 ![Nuvio TV Relay app](docs/screenshots/relay-app.jpg)
 
-### Nuvio Re-Shaped — multiple posters
-![Nuvio poster screen](docs/screenshots/nuvio-posters.jpg)
+## Best experience: Liquid Launcher TV
 
-### Nuvio Re-Shaped integration
-![Nuvio detail screen](docs/screenshots/nuvio-matrix-detail.jpg)
+In my setup, the best experience is with **Liquid Launcher TV**, a home-screen replacement for Android TV / Google TV. The screenshots in this repository are from the launcher, not from inside Nuvio.
 
-![Another Nuvio screen](docs/screenshots/nuvio-second-detail.jpg)
+Launcher discussion / details: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuLrm
 
 ## Features
 
 - Standalone Android TV app (`com.nuvio.tv.relay.standalone`).
 - Connect workflow intended for Nuvio Re-Shaped's **Manage from phone (QR)** flow.
-- Catalog list and automatic catalog selection/synchronization after connection.
+- Catalog list and automatic catalog selection / synchronization after connection.
 - Catalog metadata is converted into Android TV Watch Next / recommendation entries.
 - Poster artwork, media metadata, duplicate filtering, and Nuvio detail deep links.
 - Background sync and catalog rotation are intended to run automatically after Connect.
-- No video transcoding or playback proxy: this is a catalog/recommendation relay, not a streaming player.
+- No video transcoding or playback proxy: this is a catalog / recommendation relay, not a streaming player.
 
 ## Requirements
 
@@ -45,7 +46,7 @@ A companion Android TV / Google TV app for syncing supported catalogs into Nuvio
 
 ## Download
 
-The repository includes a debug APK at [`releases/nuvio-tv-relay-debug.apk`](releases/nuvio-tv-relay-debug.apk). Android may warn that it is an unknown app; install only if you trust the source. A signed production release is not available yet.
+The repository includes a debug APK at [the latest experimental release](https://github.com/mohammadmrh12/nuvio-tv-relay-standalone/releases/tag/v0.1.0-debug). Android may warn that it is an unknown app; install only if you trust the source. A signed production release is not available yet.
 
 ## Build from source
 
@@ -56,13 +57,11 @@ export JAVA_HOME=/path/to/jdk-17
 ./gradlew :app:assembleDebug --no-daemon --console=plain
 ```
 
-Output: `app/build/outputs/apk/debug/app-debug.apk`
-
 ## Current limitations
 
 - This is an experimental MVP; launcher visibility and recommendation-row behavior depend on the TV launcher and OS version.
 - Catalog providers with required extra parameters may not be supported.
-- This app does not resolve streams or play video. It publishes catalog/recommendation metadata and deep links into Nuvio Re-Shaped.
+- This app does not resolve streams or play video. It publishes catalog / recommendation metadata and deep links into Nuvio Re-Shaped.
 - Debug APK is not a production-signed release. Review source and permissions before installing.
 
 ## Privacy
@@ -71,4 +70,4 @@ Review the source code before use. Do not submit private add-on URLs, account cr
 
 ## Feedback
 
-Use [GitHub Issues](../../issues) for reproducible bugs and feature requests. Include the TV model, Android/Google TV version, Nuvio Re-Shaped version, and relevant logs, but remove private URLs and credentials.
+Use [GitHub Issues](../../issues) for reproducible bugs and feature requests. Include TV model, Android / Google TV version, Nuvio Re-Shaped version, and relevant logs, but remove private URLs and credentials.
