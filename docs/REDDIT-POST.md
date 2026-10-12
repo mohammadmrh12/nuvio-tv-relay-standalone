@@ -15,11 +15,14 @@ The goal is to sync supported catalog metadata into the TV’s Watch Next / reco
 - Publishes catalog metadata and deep links; it is not a video player and does not proxy or transcode streams.
 
 **Screenshots**
-- Relay app: [open screenshot](../docs/screenshots/relay-app.jpg)
-- Nuvio detail screen: [open screenshot](../docs/screenshots/nuvio-matrix-detail.jpg)
-- Second Nuvio screen: [open screenshot](../docs/screenshots/nuvio-second-detail.jpg)
 
-**Source and debug APK:** https://github.com/mohammadmrh12/nuvio-tv-relay-standalone
+![Relay app screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/relay-app.jpg)
+
+![Nuvio detail screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/nuvio-matrix-detail.jpg)
+
+![Second Nuvio screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/nuvio-second-detail.jpg)
+
+**Source and APK:** https://github.com/mohammadmrh12/nuvio-tv-relay-standalone/releases/tag/v0.1.0-debug
 
 This is an experimental MVP and the APK is currently a debug build, not a production-signed release. Launcher behavior and catalog compatibility still need testing across devices.
 
