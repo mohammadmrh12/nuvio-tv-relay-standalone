@@ -30,7 +30,7 @@ class MainActivity : Activity() {
     private lateinit var catalogPanel: LinearLayout
     private lateinit var pageScroll: ScrollView
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var rotationOn = false
+    private var rotationOn = true
     private var rotationSeconds = 15
     private var rotationIndex = 0
     private val sectionViews = linkedMapOf<String, View>()
@@ -55,6 +55,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefs.edit()
+            .putBoolean("auto_sync", prefs.getBoolean("auto_sync", true))
+            .putBoolean("auto_cache", prefs.getBoolean("auto_cache", true))
+            .putBoolean("auto_rotation", prefs.getBoolean("auto_rotation", true))
+            .putBoolean("rotate_all_catalogs", true)
+            .apply()
+        rotationOn = prefs.getBoolean("auto_rotation", true)
         selected.addAll(prefs.getStringSet("selected", emptySet()) ?: emptySet())
         if (prefs.getStringSet("selected", emptySet()).isNullOrEmpty()) selected.add(nativeContinueCatalog().key)
         val storedAddons = prefs.getStringSet("addons", emptySet()) ?: emptySet()
@@ -192,18 +199,18 @@ class MainActivity : Activity() {
                     selected.addAll(catalogs.map { it.key })
                     prefs.edit().putStringSet("selected", selected.toSet())
                         .putBoolean("auto_sync", true)
+                        .putBoolean("auto_cache", true)
+                        .putBoolean("auto_rotation", true)
                         .putBoolean("rotate_all_catalogs", true)
                         .apply()
+                    rotationOn = true
                     render()
                     message("Connected. Imported " + importedCount + " add-ons and " + loadedCatalogs.size + " catalogs. Sync and rotation start automatically.")
                     val syncService = Intent(this@MainActivity, RelaySyncService::class.java)
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(syncService) else startService(syncService)
                     if (selected.isNotEmpty()) {
                         mainHandler.post { sync() }
-                        rotationOn = true
-                        rotationIndex = 0
-                        mainHandler.removeCallbacks(rotationTask)
-                        mainHandler.postDelayed(rotationTask, rotationSeconds * 1000L)
+                        startAutomaticRotation()
                     }
                 }
             } catch (e: Exception) {
@@ -286,6 +293,7 @@ class MainActivity : Activity() {
             futures.forEach { future -> runCatching { loaded.addAll(future.get()) } }
             runOnUiThread {
                 catalogs.clear(); catalogs.addAll(withNativeContinue(loaded)); previews.clear(); expanded.clear(); render()
+                if (prefs.getBoolean("auto_rotation", true) && catalogs.isNotEmpty()) startAutomaticRotation()
                 val failed = urls.size - futures.count { it.isDone && !it.isCompletedExceptionally && runCatching { it.get().isNotEmpty() }.getOrDefault(false) }
                 message("Loaded " + loaded.size + " catalogs" + if (failed > 0) "; $failed add-ons unavailable (will retry automatically)." else ".")
             }
@@ -374,8 +382,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startAutomaticRotation() {
+        rotationOn = prefs.getBoolean("auto_rotation", true)
+        mainHandler.removeCallbacks(rotationTask)
+        if (!rotationOn || catalogs.isEmpty()) return
+        rotationIndex = 0
+        mainHandler.postDelayed(rotationTask, rotationSeconds * 1000L)
+    }
+
     private fun toggleRotation() {
         rotationOn = !rotationOn
+        prefs.edit().putBoolean("auto_rotation", rotationOn).apply()
         mainHandler.removeCallbacks(rotationTask)
         if (rotationOn) {
             rotationIndex = 0
