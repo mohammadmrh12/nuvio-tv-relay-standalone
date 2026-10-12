@@ -215,6 +215,20 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::lastSyncLabel.isInitialized) updateLastSyncLabel()
+        mainHandler.removeCallbacks(syncStatusRefresh)
+        mainHandler.post(syncStatusRefresh)
+    }
+
+    override fun onPause() {
+        mainHandler.removeCallbacks(syncStatusRefresh)
+        super.onPause()
+    }
+
+    private val syncStatusRefresh = object : Runnable {
+        override fun run() {
+            if (::lastSyncLabel.isInitialized) updateLastSyncLabel()
+            if (!isFinishing) mainHandler.postDelayed(this, 2000L)
+        }
     }
 
     private fun lastSyncText(): String {
