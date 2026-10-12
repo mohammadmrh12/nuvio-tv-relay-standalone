@@ -20,13 +20,15 @@ import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RelaySyncService : Service() {
     companion object { const val ACTION_FORCE_SYNC = "com.nuvio.tv.relay.standalone.FORCE_SYNC" }
     private val handler = Handler(Looper.getMainLooper())
-    private val artworkExecutor = Executors.newSingleThreadExecutor()
-    private val artworkWarmupRunning = AtomicBoolean(false)
+    // Parallel warmup prevents one slow image from blocking the entire launcher row.
+    private val artworkExecutor = Executors.newFixedThreadPool(3)
+    private val artworkInFlight = ConcurrentHashMap.newKeySet<String>()
     private val busy = AtomicBoolean(false)
     override fun onCreate() {
         super.onCreate()
@@ -150,24 +152,28 @@ class RelaySyncService : Service() {
                 firstNative != null && it.optString("type").equals(firstNative.optString("type"), true) &&
                     it.optString("id") == firstNative.optString("id")
             }.take(if (firstNative != null) 49 else 50)
-            // One background worker warms each selected catalog without spawning threads every 15 seconds.
-            if (artworkWarmupRunning.compareAndSet(false, true)) {
+            // Warm the first launcher-visible items first, then continue through the rest in background.
+            // The in-flight set prevents duplicate downloads when the 15-second sync tick repeats.
+            wanted.forEachIndexed { index, item ->
+                val background = highestResolutionImage(item.optString("background"))
+                    ?: highestResolutionImage(item.optString("poster"))
+                if (background.isNullOrBlank()) return@forEachIndexed
+                val art = PosterCacheProvider.heroUriFor(
+                    this, background,
+                    highestResolutionImage(item.optString("titleLogo")),
+                    item.optString("rating")
+                ) ?: return@forEachIndexed
+                val key = art.lastPathSegment ?: return@forEachIndexed
+                if (!artworkInFlight.add(key)) return@forEachIndexed
                 artworkExecutor.execute {
                     try {
-                        wanted.forEach { item ->
-                            runCatching {
-                                val background = highestResolutionImage(item.optString("background"))
-                                    ?: highestResolutionImage(item.optString("poster"))
-                                val art = PosterCacheProvider.heroUriFor(
-                                    this, background,
-                                    highestResolutionImage(item.optString("titleLogo")),
-                                    item.optString("rating")
-                                )
-                                if (art != null) contentResolver.openFileDescriptor(art, "r")?.use { }
-                            }
-                        }
+                        // Give the top row priority. Remaining artwork is queued in catalog order.
+                        if (index >= 12) Thread.sleep(150L)
+                        contentResolver.openFileDescriptor(art, "r")?.use { }
+                    } catch (_: Exception) {
+                        // Keep failures retryable on the next background sync tick.
                     } finally {
-                        artworkWarmupRunning.set(false)
+                        artworkInFlight.remove(key)
                     }
                 }
             }
