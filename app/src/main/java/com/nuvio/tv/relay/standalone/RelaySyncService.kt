@@ -53,22 +53,16 @@ class RelaySyncService : Service() {
         return START_STICKY
     }
 
-    /** One-time migration: discard every previously published relay artwork URI and cached composite. */
+    /** Non-destructive artwork migration: retain working launcher rows and cached images.
+     * New hero descriptors naturally create fresh files; rows are replaced only as each
+     * catalog is successfully refreshed, so a temporary network/image failure cannot blank the launcher.
+     */
     private fun enforceArtworkLayoutVersion() {
         val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-        val currentVersion = 16
+        val currentVersion = 17
         if (prefs.getInt("artwork_layout_version", 0) >= currentVersion) return
-        runCatching {
-            existingIds().forEach { id -> deleteRelay(id) }
-        }
-        runCatching {
-            File(cacheDir, "poster-cache").listFiles()?.forEach { file ->
-                if (file.isFile) file.delete() else file.deleteRecursively()
-            }
-        }
         prefs.edit()
             .putInt("artwork_layout_version", currentVersion)
-            .putInt("service_rotation_index", 0)
             .apply()
     }
     private val tick = object : Runnable {
