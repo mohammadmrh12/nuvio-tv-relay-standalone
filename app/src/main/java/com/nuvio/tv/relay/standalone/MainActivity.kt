@@ -19,11 +19,12 @@ import java.net.URLEncoder
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import java.util.concurrent.CompletableFuture
 import androidx.tvprovider.media.tv.TvContractCompat
 import androidx.tvprovider.media.tv.WatchNextProgram
 
 class MainActivity : Activity() {
-    private val worker = Executors.newSingleThreadExecutor()
+    private val worker = Executors.newFixedThreadPool(8)
     private lateinit var root: LinearLayout
     private lateinit var controls: LinearLayout
     private lateinit var catalogPanel: LinearLayout
@@ -56,7 +57,18 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         selected.addAll(prefs.getStringSet("selected", emptySet()) ?: emptySet())
         if (prefs.getStringSet("selected", emptySet()).isNullOrEmpty()) selected.add(nativeContinueCatalog().key)
-        addons.addAll(prefs.getStringSet("addons", emptySet()) ?: emptySet())
+        val storedAddons = prefs.getStringSet("addons", emptySet()) ?: emptySet()
+        val repairedAddons = storedAddons.associateWith { normalize(it) }
+        addons.addAll(repairedAddons.values)
+        if (repairedAddons.any { it.key != it.value }) {
+            val oldSelected = prefs.getStringSet("selected", emptySet()) ?: emptySet()
+            val repairedSelected = oldSelected.map { key ->
+                val match = repairedAddons.entries.firstOrNull { key.startsWith(it.key + "|") }
+                if (match == null) key else match.value + key.removePrefix(match.key)
+            }.toSet()
+            prefs.edit().putStringSet("addons", addons.toSet()).putStringSet("selected", repairedSelected).apply()
+            selected.clear(); selected.addAll(repairedSelected)
+        }
         pageScroll = ScrollView(this)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -214,6 +226,7 @@ class MainActivity : Activity() {
         return when (state) {
             "running" -> "$last\nSync status: Running…"
             "success" -> "$last\nSync status: Successful"
+            "partial" -> "$last\nSync status: Partial — $error"
             "failed" -> "$last\nSync status: Failed — $error"
             else -> last + "\nSync status: Not started"
         }
@@ -237,7 +250,7 @@ class MainActivity : Activity() {
                     else message(if (prefs.getString("sync_status", "") == "success") "Sync completed successfully." else "Sync failed. See status below for the reason.")
                 }
             })
-            refresh()
+            refresh(forceNetwork = true)
         } catch (e: Exception) {
             prefs.edit().putString("sync_status", "failed").putString("sync_error", e.message ?: e.javaClass.simpleName).apply()
             updateLastSyncLabel()
@@ -245,19 +258,22 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun refresh() {
+    private fun refresh(forceNetwork: Boolean = false) {
         if (addons.isEmpty()) { render(); message("Connect to Nuvio Re-Shaped or add a manifest URL."); return }
         worker.execute {
-            val loaded = mutableListOf<Catalog>()
-            addons.toList().forEach { url ->
+            val urls = addons.toList()
+            val futures = urls.map { url -> CompletableFuture.supplyAsync({
                 try {
-                    val m = json(url)
-                    loaded.addAll(parseCatalogs(url, m.optString("name", Uri.parse(url).host ?: "Add-on"), m))
-                } catch (_: Exception) { }
-            }
+                    val m = json(url, forceNetwork)
+                    parseCatalogs(url, m.optString("name", Uri.parse(url).host ?: "Add-on"), m)
+                } catch (_: Exception) { emptyList<Catalog>() }
+            }, worker) }
+            val loaded = mutableListOf<Catalog>()
+            futures.forEach { future -> runCatching { loaded.addAll(future.get()) } }
             runOnUiThread {
                 catalogs.clear(); catalogs.addAll(withNativeContinue(loaded)); previews.clear(); expanded.clear(); render()
-                message("Loaded " + loaded.size + " catalogs.")
+                val failed = urls.size - futures.count { it.isDone && !it.isCompletedExceptionally && runCatching { it.get().isNotEmpty() }.getOrDefault(false) }
+                message("Loaded " + loaded.size + " catalogs" + if (failed > 0) "; $failed add-ons unavailable (will retry automatically)." else ".")
             }
         }
     }
@@ -616,8 +632,16 @@ class MainActivity : Activity() {
     }
     private fun relayId(item: Item) = "nuvio_relay_" + item.type.lowercase() + "_" + item.id
     private fun normalize(raw: String): String {
-        val s = raw.trim().trimEnd('/')
-        return if (s.endsWith("/manifest.json")) s else s + "/manifest.json"
+        val s = raw.trim()
+        // Repair malformed add-on URLs where the query was accidentally appended before /manifest.json,
+        // e.g. /nuvio?bcv=4/manifest.json -> /nuvio/manifest.json?bcv=4.
+        val parsed = runCatching { Uri.parse(s) }.getOrNull() ?: return if (s.endsWith("/manifest.json")) s else s.trimEnd('/') + "/manifest.json"
+        val query = parsed.encodedQuery
+        if (!query.isNullOrBlank() && query.endsWith("/manifest.json")) {
+            return parsed.buildUpon().encodedPath(parsed.encodedPath?.trimEnd('/') + "/manifest.json")
+                .encodedQuery(query.removeSuffix("/manifest.json")).build().toString()
+        }
+        return if (s.endsWith("/manifest.json") || s.substringBefore('?').endsWith("/manifest.json")) s else s.trimEnd('/') + "/manifest.json"
     }
     private fun jsonArray(url: String): JSONArray {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -628,30 +652,35 @@ class MainActivity : Activity() {
             return JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
         } finally { conn.disconnect() }
     }
-    private fun json(url: String): JSONObject {
+    private fun json(url: String, forceNetwork: Boolean = false): JSONObject {
         val cacheDir = File(cacheDir, "api-cache").apply { mkdirs() }
         val key = MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
         val file = File(cacheDir, key + ".json")
         val isCatalog = url.contains("/catalog/")
         val ttl = if (isCatalog) 15 * 60 * 1000L else 24 * 60 * 60 * 1000L
-        if (file.exists() && System.currentTimeMillis() - file.lastModified() < ttl) {
+        if (!forceNetwork && file.exists() && System.currentTimeMillis() - file.lastModified() < ttl) {
             try { return JSONObject(file.readText()) } catch (_: Exception) { }
         }
-        try {
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 8000; conn.readTimeout = 10000
-            conn.setRequestProperty("Accept", "application/json")
+        var lastError: Exception? = null
+        repeat(2) { attempt ->
             try {
-                if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP " + conn.responseCode)
-                val body = conn.inputStream.bufferedReader().use { it.readText() }
-                val parsed = JSONObject(body)
-                runCatching { file.writeText(body) }
-                return parsed
-            } finally { conn.disconnect() }
-        } catch (e: Exception) {
-            if (file.exists()) try { return JSONObject(file.readText()) } catch (_: Exception) { }
-            throw e
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 4500; conn.readTimeout = 6000
+                conn.setRequestProperty("Accept", "application/json")
+                try {
+                    if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP " + conn.responseCode)
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val parsed = JSONObject(body)
+                    runCatching { file.writeText(body) }
+                    return parsed
+                } finally { conn.disconnect() }
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt == 0) Thread.sleep(250)
+            }
         }
+        if (file.exists()) try { return JSONObject(file.readText()) } catch (_: Exception) { }
+        throw (lastError ?: IllegalStateException("Network request failed"))
     }
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
     private fun button(caption: String, parent: LinearLayout = controls, action: () -> Unit) {

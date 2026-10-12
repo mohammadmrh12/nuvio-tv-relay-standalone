@@ -83,16 +83,12 @@ class RelaySyncService : Service() {
         val prefs = getSharedPreferences("relay", MODE_PRIVATE)
         prefs.edit().putString("sync_status", "running").putString("sync_error", "").apply()
         try {
-            if (forceRefresh) {
-                runCatching { File(cacheDir, "api-cache").deleteRecursively() }
-                runCatching { File(cacheDir, "poster-cache").deleteRecursively() }
-            }
             val addons = prefs.getStringSet("addons", emptySet()) ?: emptySet()
             val selected = prefs.getStringSet("selected", emptySet()) ?: emptySet()
             val candidates = mutableListOf<Triple<String, JSONObject, String>>()
             var manifestsLoaded = 0
             for (addon in addons) {
-                val manifest = try { json(addon).also { manifestsLoaded++ } } catch (_: Exception) { continue }
+                val manifest = try { json(addon, forceNetwork = forceRefresh).also { manifestsLoaded++ } } catch (_: Exception) { continue }
                 val cats = manifest.optJSONArray("catalogs") ?: continue
                 for (i in 0 until cats.length()) {
                     val c = cats.optJSONObject(i) ?: continue
@@ -106,10 +102,12 @@ class RelaySyncService : Service() {
             }
             // Do not interpret a network failure as catalog removal. Only reconcile stale rows
             // when every currently configured add-on manifest was read successfully.
-            if (manifestsLoaded != addons.size) {
-                val failed = addons.size - manifestsLoaded
+            val failedManifests = addons.size - manifestsLoaded
+            // Continue rotating any reachable catalogs even if one add-on is unavailable.
+            // When none can be read, preserve the launcher row and report the failure.
+            if (candidates.isEmpty() && failedManifests > 0) {
                 prefs.edit().putString("sync_status", "failed")
-                    .putString("sync_error", "$failed of ${addons.size} add-on manifests failed to load; existing launcher rows were kept.").apply()
+                    .putString("sync_error", "$failedManifests of ${addons.size} add-on manifests failed to load; existing launcher rows were kept. Automatic retry is enabled.").apply()
                 return
             }
             if (candidates.isEmpty()) {
@@ -130,9 +128,9 @@ class RelaySyncService : Service() {
             val id = catalog.optString("id")
             val base = addon.removeSuffix("/manifest.json").trimEnd('/')
             val url = "$base/catalog/${enc(type)}/${enc(id)}.json?skip=0&limit=100"
-            val metas = try { json(url).optJSONArray("metas") } catch (e: Exception) {
+            val metas = try { json(url, forceNetwork = forceRefresh).optJSONArray("metas") } catch (e: Exception) {
                 prefs.edit().putString("sync_status", "failed")
-                    .putString("sync_error", "Catalog load failed: ${e.message ?: e.javaClass.simpleName}").apply()
+                    .putString("sync_error", "Catalog load failed: ${e.message ?: e.javaClass.simpleName}; will retry automatically.").apply()
                 null
             } ?: return
             val all = linkedMapOf<String, JSONObject>()
@@ -178,8 +176,11 @@ class RelaySyncService : Service() {
             existingIds().filter { it !in wantedIds }.forEach { deleteRelay(it) }
             wanted.forEachIndexed { index, item -> publish(item, topOfCatalog = index == 0) }
             firstNative?.let { publish(it, pinnedFirst = true) }
-            prefs.edit().putLong("last_successful_sync", System.currentTimeMillis())
-                .putString("sync_status", "success").putString("sync_error", "").apply()
+            val editor = prefs.edit().putLong("last_successful_sync", System.currentTimeMillis())
+            if (failedManifests > 0) editor.putString("sync_status", "partial")
+                .putString("sync_error", "$failedManifests of ${addons.size} add-on manifests unavailable; reachable catalogs are still rotating and failed add-ons will be retried automatically.")
+            else editor.putString("sync_status", "success").putString("sync_error", "")
+            editor.apply()
         } catch (e: Exception) {
             prefs.edit().putString("sync_status", "failed")
                 .putString("sync_error", e.message ?: e.javaClass.simpleName).apply()
@@ -248,21 +249,29 @@ class RelaySyncService : Service() {
         } catch (_: Exception) { }
         return out.distinctBy { it.optString("type").lowercase() + ":" + it.optString("id") }
     }
-    private fun json(url: String): JSONObject {
+    private fun json(url: String, forceNetwork: Boolean = false): JSONObject {
         val dir = File(cacheDir, "api-cache").apply { mkdirs() }
         val hash = MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
         val f = File(dir, "$hash.json")
         val ttl = if (url.contains("/catalog/")) 15 * 60 * 1000L else 24 * 60 * 60 * 1000L
-        if (f.exists() && System.currentTimeMillis() - f.lastModified() < ttl) try { return JSONObject(f.readText()) } catch (_: Exception) {}
-        try {
-            val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 8000; c.readTimeout = 10000; c.setRequestProperty("Accept", "application/json")
+        if (!forceNetwork && f.exists() && System.currentTimeMillis() - f.lastModified() < ttl) try { return JSONObject(f.readText()) } catch (_: Exception) {}
+        var lastError: Exception? = null
+        repeat(2) { attempt ->
             try {
-                if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
-                val body = c.inputStream.bufferedReader().use { it.readText() }
-                val parsed = JSONObject(body); runCatching { f.writeText(body) }; return parsed
-            } finally { c.disconnect() }
-        } catch (e: Exception) { if (f.exists()) try { return JSONObject(f.readText()) } catch (_: Exception) {}; throw e }
+                val c = URL(url).openConnection() as HttpURLConnection
+                c.connectTimeout = 4500; c.readTimeout = 6000; c.setRequestProperty("Accept", "application/json")
+                try {
+                    if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
+                    val body = c.inputStream.bufferedReader().use { it.readText() }
+                    val parsed = JSONObject(body); runCatching { f.writeText(body) }; return parsed
+                } finally { c.disconnect() }
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt == 0) Thread.sleep(250)
+            }
+        }
+        if (f.exists()) try { return JSONObject(f.readText()) } catch (_: Exception) {}
+        throw (lastError ?: IllegalStateException("Network request failed"))
     }
     private fun highestResolutionImage(raw: String?): String? {
         if (raw.isNullOrBlank() || !raw.startsWith("http")) return null
