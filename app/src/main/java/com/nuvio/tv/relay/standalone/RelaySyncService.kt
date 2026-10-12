@@ -23,10 +23,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RelaySyncService : Service() {
+    companion object { const val ACTION_FORCE_SYNC = "com.nuvio.tv.relay.standalone.FORCE_SYNC" }
     private val handler = Handler(Looper.getMainLooper())
     private val artworkExecutor = Executors.newSingleThreadExecutor()
     private val artworkWarmupRunning = AtomicBoolean(false)
-    private var busy = false
+    private val busy = AtomicBoolean(false)
     override fun onCreate() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 26) {
@@ -40,6 +41,11 @@ class RelaySyncService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         enforceArtworkLayoutVersion()
+        if (intent?.action == ACTION_FORCE_SYNC) {
+            val prefs = getSharedPreferences("relay", MODE_PRIVATE)
+            prefs.edit().putString("sync_status", "running").putString("sync_error", "").apply()
+            Thread { syncNow(forceRefresh = true) }.start()
+        }
         handler.removeCallbacks(tick)
         handler.post(tick)
         return START_STICKY
@@ -68,20 +74,25 @@ class RelaySyncService : Service() {
             if (!getSharedPreferences("relay", MODE_PRIVATE).getBoolean("auto_sync", true)) {
                 stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return
             }
-            if (!busy) Thread { syncNow() }.start()
+            if (!busy.get()) Thread { syncNow() }.start()
             handler.postDelayed(this, 15 * 1000L)
         }
     }
-    private fun syncNow() {
-        if (busy) return
-        busy = true
+    private fun syncNow(forceRefresh: Boolean = false) {
+        if (!busy.compareAndSet(false, true)) return
+        val prefs = getSharedPreferences("relay", MODE_PRIVATE)
+        prefs.edit().putString("sync_status", "running").putString("sync_error", "").apply()
         try {
-            val prefs = getSharedPreferences("relay", MODE_PRIVATE)
+            if (forceRefresh) {
+                runCatching { File(cacheDir, "api-cache").deleteRecursively() }
+                runCatching { File(cacheDir, "poster-cache").deleteRecursively() }
+            }
             val addons = prefs.getStringSet("addons", emptySet()) ?: emptySet()
             val selected = prefs.getStringSet("selected", emptySet()) ?: emptySet()
             val candidates = mutableListOf<Triple<String, JSONObject, String>>()
+            var manifestsLoaded = 0
             for (addon in addons) {
-                val manifest = try { json(addon) } catch (_: Exception) { continue }
+                val manifest = try { json(addon).also { manifestsLoaded++ } } catch (_: Exception) { continue }
                 val cats = manifest.optJSONArray("catalogs") ?: continue
                 for (i in 0 until cats.length()) {
                     val c = cats.optJSONObject(i) ?: continue
@@ -93,7 +104,22 @@ class RelaySyncService : Service() {
                     }
                 }
             }
-            if (candidates.isEmpty()) return
+            // Do not interpret a network failure as catalog removal. Only reconcile stale rows
+            // when every currently configured add-on manifest was read successfully.
+            if (manifestsLoaded != addons.size) {
+                val failed = addons.size - manifestsLoaded
+                prefs.edit().putString("sync_status", "failed")
+                    .putString("sync_error", "$failed of ${addons.size} add-on manifests failed to load; existing launcher rows were kept.").apply()
+                return
+            }
+            if (candidates.isEmpty()) {
+                val native = readNativeContinueWatching().firstOrNull()
+                existingIds().filter { it != "nuvio_relay_pinned_native_first" }.forEach { deleteRelay(it) }
+                native?.let { publish(it, pinnedFirst = true) } ?: deleteRelay("nuvio_relay_pinned_native_first")
+                prefs.edit().putLong("last_successful_sync", System.currentTimeMillis())
+                    .putString("sync_status", "success").putString("sync_error", "").apply()
+                return
+            }
             // Stable ordering keeps the persisted cursor aligned with the user's selected catalogs.
             candidates.sortBy { "${it.second.optString("name")}|${it.first}|${it.second.optString("type")}|${it.second.optString("id")}" }
             // Background sync rotates the published catalog and persists the cursor across restarts.
@@ -104,7 +130,11 @@ class RelaySyncService : Service() {
             val id = catalog.optString("id")
             val base = addon.removeSuffix("/manifest.json").trimEnd('/')
             val url = "$base/catalog/${enc(type)}/${enc(id)}.json?skip=0&limit=100"
-            val metas = try { json(url).optJSONArray("metas") } catch (_: Exception) { null } ?: return
+            val metas = try { json(url).optJSONArray("metas") } catch (e: Exception) {
+                prefs.edit().putString("sync_status", "failed")
+                    .putString("sync_error", "Catalog load failed: ${e.message ?: e.javaClass.simpleName}").apply()
+                null
+            } ?: return
             val all = linkedMapOf<String, JSONObject>()
             for (j in 0 until metas.length()) {
                 val m = metas.optJSONObject(j) ?: continue
@@ -148,7 +178,12 @@ class RelaySyncService : Service() {
             existingIds().filter { it !in wantedIds }.forEach { deleteRelay(it) }
             wanted.forEachIndexed { index, item -> publish(item, topOfCatalog = index == 0) }
             firstNative?.let { publish(it, pinnedFirst = true) }
-        } finally { busy = false }
+            prefs.edit().putLong("last_successful_sync", System.currentTimeMillis())
+                .putString("sync_status", "success").putString("sync_error", "").apply()
+        } catch (e: Exception) {
+            prefs.edit().putString("sync_status", "failed")
+                .putString("sync_error", e.message ?: e.javaClass.simpleName).apply()
+        } finally { busy.set(false) }
     }
     private fun publish(m: JSONObject, pinnedFirst: Boolean = false, topOfCatalog: Boolean = false) {
         val type = m.optString("type"); val id = m.optString("id")

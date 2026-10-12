@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private var rotationIndex = 0
     private val sectionViews = linkedMapOf<String, View>()
     private lateinit var status: TextView
+    private lateinit var lastSyncLabel: TextView
     private lateinit var list: LinearLayout
     private val catalogs = mutableListOf<Catalog>()
     private val selected = mutableSetOf<String>()
@@ -82,6 +83,9 @@ class MainActivity : Activity() {
         root.addView(controls, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) })
         controls.addView(label("CONNECT", 13, Color.rgb(94, 190, 255), true))
         button("Connect", action = { connectToNuvio() })
+        button("Sync Now / Refresh Artwork", action = { forceRefresh() })
+        lastSyncLabel = label(lastSyncText(), 12, Color.rgb(153, 170, 192))
+        controls.addView(lastSyncLabel)
         controls.addView(label("ADD-ON SETUP GUIDE", 14, Color.WHITE, true))
         controls.addView(label("1. Open Nuvio Re-Shaped on this TV.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("2. Go to Add-ons → Manage from phone (QR).", 13, Color.rgb(205, 216, 232)))
@@ -105,6 +109,7 @@ class MainActivity : Activity() {
         root.addView(status, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
         root.addView(label("Nuvio Re-Shaped is not modified by this app.", 12, Color.rgb(130, 145, 164)))
         refresh()
+        updateLastSyncLabel()
         if (prefs.getBoolean("auto_sync", true)) {
             val service = Intent(this, RelaySyncService::class.java)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
@@ -192,6 +197,51 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 runOnUiThread { message("Import failed: " + (e.message ?: "unknown error")) }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::lastSyncLabel.isInitialized) updateLastSyncLabel()
+    }
+
+    private fun lastSyncText(): String {
+        val stamp = prefs.getLong("last_successful_sync", 0L)
+        val last = if (stamp <= 0L) "Last successful sync: Never" else "Last successful sync: " +
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(stamp))
+        val state = prefs.getString("sync_status", "idle") ?: "idle"
+        val error = prefs.getString("sync_error", "") ?: ""
+        return when (state) {
+            "running" -> "$last\nSync status: Running…"
+            "success" -> "$last\nSync status: Successful"
+            "failed" -> "$last\nSync status: Failed — $error"
+            else -> last + "\nSync status: Not started"
+        }
+    }
+
+    private fun updateLastSyncLabel() {
+        if (::lastSyncLabel.isInitialized) lastSyncLabel.text = lastSyncText()
+    }
+
+    private fun forceRefresh() {
+        prefs.edit().putString("sync_status", "running").putString("sync_error", "").apply()
+        updateLastSyncLabel()
+        message("Refreshing catalogs and artwork cache…")
+        val service = Intent(this, RelaySyncService::class.java).setAction(RelaySyncService.ACTION_FORCE_SYNC)
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
+            mainHandler.post(object : Runnable {
+                override fun run() {
+                    updateLastSyncLabel()
+                    if ((prefs.getString("sync_status", "idle") ?: "idle") == "running") mainHandler.postDelayed(this, 1500L)
+                    else message(if (prefs.getString("sync_status", "") == "success") "Sync completed successfully." else "Sync failed. See status below for the reason.")
+                }
+            })
+            refresh()
+        } catch (e: Exception) {
+            prefs.edit().putString("sync_status", "failed").putString("sync_error", e.message ?: e.javaClass.simpleName).apply()
+            updateLastSyncLabel()
+            message("Could not start sync: ${e.message ?: "unknown error"}")
         }
     }
 
@@ -471,8 +521,12 @@ class MainActivity : Activity() {
                 var count = 0
                 wanted.forEach { if (publish(it)) count++ }
                 firstNative?.let { if (publish(it, pinnedFirst = true)) count++ }
-                runOnUiThread { message("Published " + count + " unique titles from " + chosen.size + " catalogs.") }
-            } catch (e: Exception) { runOnUiThread { message("Sync failed: " + (e.message ?: "unknown error")) } }
+                prefs.edit().putLong("last_successful_sync", System.currentTimeMillis()).apply()
+                runOnUiThread { updateLastSyncLabel(); message("Published " + count + " unique titles from " + chosen.size + " catalogs.") }
+            } catch (e: Exception) {
+                prefs.edit().putString("sync_status", "failed").putString("sync_error", e.message ?: e.javaClass.simpleName).apply()
+                runOnUiThread { updateLastSyncLabel(); message("Sync failed: " + (e.message ?: "unknown error")) }
+            }
         }
     }
 
