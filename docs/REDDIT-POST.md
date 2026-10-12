@@ -16,6 +16,8 @@ The goal is to sync supported catalog metadata into the TV’s Watch Next / reco
 
 **Screenshots**
 
+![Nuvio home with multiple posters](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/nuvio-posters.jpg)
+
 ![Relay app screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/relay-app.jpg)
 
 ![Nuvio detail screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/nuvio-matrix-detail.jpg)

@@ -11,6 +11,9 @@ A companion Android TV / Google TV app for syncing supported catalogs into Nuvio
 ### Relay app
 ![Nuvio TV Relay app](docs/screenshots/relay-app.jpg)
 
+### Nuvio Re-Shaped — multiple posters
+![Nuvio poster screen](docs/screenshots/nuvio-posters.jpg)
+
 ### Nuvio Re-Shaped integration
 ![Nuvio detail screen](docs/screenshots/nuvio-matrix-detail.jpg)
 
