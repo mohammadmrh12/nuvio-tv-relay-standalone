@@ -16,8 +16,16 @@ A companion Android TV / Google TV app for syncing supported catalogs into Nuvio
 
 ![Liquid Launcher TV with focus moved](docs/screenshots/liquid-launcher-focus.png)
 
+![Liquid Launcher TV showing another poster row](docs/screenshots/liquid-launcher-row2.png)
+
+![Liquid Launcher TV showing a further poster row](docs/screenshots/liquid-launcher-row3.png)
+
 ### Nuvio TV Relay app
 ![Nuvio TV Relay app](docs/screenshots/relay-app.jpg)
+
+## Artwork: title logo and metadata on the poster
+
+For landscape hero cards, the relay combines the available high-resolution backdrop with the title logo and rating text, placing them together inside the artwork itself. The composed image is cached locally to avoid rebuilding it for every display. This depends on the catalog providing a usable backdrop, logo, and rating; missing fields cannot be fabricated.
 
 ## Best experience: Liquid Launcher TV
 
@@ -31,7 +39,8 @@ Launcher discussion / details: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuL
 - Connect workflow intended for Nuvio Re-Shaped's **Manage from phone (QR)** flow.
 - Catalog list and automatic catalog selection / synchronization after connection.
 - Catalog metadata is converted into Android TV Watch Next / recommendation entries.
-- Poster artwork, media metadata, duplicate filtering, and Nuvio detail deep links.
+- Enhanced wide poster artwork: where the catalog provides a title logo, the app composites the movie/show logo and rating metadata directly onto the high-resolution background as one cached hero image.
+- Catalog metadata, duplicate filtering, and Nuvio detail deep links.
 - Background sync and catalog rotation are intended to run automatically after Connect.
 - No video transcoding or playback proxy: this is a catalog / recommendation relay, not a streaming player.
 

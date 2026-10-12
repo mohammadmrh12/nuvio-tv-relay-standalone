@@ -12,6 +12,7 @@ The goal is to sync supported catalog metadata into Android TV’s Watch Next / 
 - Runs as a separate app; it does not replace or patch Nuvio Re-Shaped.
 - Has a Connect workflow using Nuvio Re-Shaped’s Manage from phone (QR) screen.
 - Loads catalog entries and enables automatic synchronization / rotation.
+- Composes the available title logo and rating metadata directly into high-resolution landscape hero artwork (when the catalog provides those assets), then caches the combined image.
 - Publishes catalog metadata and deep links; it is not a video player and does not proxy or transcode streams.
 
 **Best experience: Liquid Launcher TV**
@@ -22,6 +23,10 @@ Launcher discussion: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuLrm
 **Screenshots**
 
 ![Liquid Launcher TV home screen with poster rows](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-home.jpg)
+
+![Liquid Launcher TV additional poster row](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-row2.png)
+
+![Liquid Launcher TV another poster row](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-row3.png)
 
 ![Nuvio TV Relay app](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/relay-app.jpg)
 
