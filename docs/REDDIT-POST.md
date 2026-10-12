@@ -24,9 +24,11 @@ Launcher discussion: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuLrm
 
 ![Liquid Launcher TV home screen with poster rows](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-home.jpg)
 
-![Liquid Launcher TV additional poster row](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-row2.png)
+![Fresh real-device Liquid Launcher TV screenshot](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-home-real.png)
 
-![Liquid Launcher TV another poster row](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-row3.png)
+![Hero artwork with title logo and rating metadata composited into the image](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/liquid-launcher-hero-logo-metadata.png)
+
+![Title details screen with synopsis and metadata](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/nuvio-title-detail-real.png)
 
 ![Nuvio TV Relay app](https://raw.githubusercontent.com/mohammadmrh12/nuvio-tv-relay-standalone/main/docs/screenshots/relay-app.jpg)
 

@@ -16,9 +16,13 @@ A companion Android TV / Google TV app for syncing supported catalogs into Nuvio
 
 ![Liquid Launcher TV with focus moved](docs/screenshots/liquid-launcher-focus.png)
 
-![Liquid Launcher TV showing another poster row](docs/screenshots/liquid-launcher-row2.png)
+![Fresh real-device capture of Liquid Launcher TV](docs/screenshots/liquid-launcher-home-real.png)
 
-![Liquid Launcher TV showing a further poster row](docs/screenshots/liquid-launcher-row3.png)
+### Hero artwork with title logo and metadata
+![Actual Liquid Launcher TV hero showing the title logo, rating, year, and genres composited into the background artwork](docs/screenshots/liquid-launcher-hero-logo-metadata.png)
+
+### Title details screen
+![Actual title details screen showing description and metadata](docs/screenshots/nuvio-title-detail-real.png)
 
 ### Nuvio TV Relay app
 ![Nuvio TV Relay app](docs/screenshots/relay-app.jpg)
