@@ -54,11 +54,13 @@ class PosterCacheProvider : ContentProvider() {
         val logoUrl = uri.getQueryParameter("logo")
         val rating = uri.getQueryParameter("rating").orEmpty().trim()
         val platformUrl = uri.getQueryParameter("platform")
+        val platformName = uri.getQueryParameter("platformName").orEmpty().trim()
         val bg = decodeUrl(bgUrl, maxWidth = 1920, maxHeight = 1080) ?: throw java.io.FileNotFoundException("Hero background could not be decoded")
-        // Decode to a TV-appropriate working size. TMDB's original asset can be 4K+;
-        // decoding it full-size and allocating a second ARGB bitmap needlessly spikes RAM.
-        val w = bg.width
-        val h = bg.height
+        // Render overlays at a consistent high resolution even when the supplied backdrop is small.
+        // Keep the source aspect ratio and upscale only the canvas, not the source's actual detail.
+        val scale = maxOf(1f, 1920f / bg.width, 1080f / bg.height)
+        val w = (bg.width * scale).toInt().coerceAtMost(1920)
+        val h = (bg.height * scale).toInt().coerceAtMost(1080)
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -148,20 +150,22 @@ class PosterCacheProvider : ContentProvider() {
             // same outline, type size, corner radius and inter-badge spacing.
             if (!platformUrl.isNullOrBlank()) {
                 val providerKey = platformUrl.removePrefix("asset:").substringBefore(".").lowercase()
-                val providerName = when {
-                    providerKey.contains("appletv") || providerKey.contains("apple-tv") -> "Apple TV+"
-                    providerKey.contains("primevideo") || providerKey.contains("prime-video") -> "Prime Video"
-                    providerKey == "hbo" -> "HBO"
-                    providerKey == "max" -> "Max"
-                    providerKey.contains("disneyplus") || providerKey.contains("disney-plus") -> "Disney+"
-                    providerKey.contains("netflix") -> "Netflix"
-                    providerKey.contains("cbs") -> "CBS"
-                    providerKey.contains("hulu") -> "Hulu"
-                    providerKey.contains("viu") -> "Viu"
-                    providerKey.contains("peacock") -> "Peacock"
-                    providerKey.contains("paramountplus") || providerKey.contains("paramount-plus") -> "Paramount+"
-                    providerKey.contains("crunchyroll") -> "Crunchyroll"
-                    else -> "Streaming"
+                val providerName = platformName.ifBlank {
+                    when {
+                        providerKey.contains("appletv") || providerKey.contains("apple-tv") -> "Apple TV+"
+                        providerKey.contains("primevideo") || providerKey.contains("prime-video") -> "Prime Video"
+                        providerKey == "hbo" -> "HBO"
+                        providerKey == "max" -> "Max"
+                        providerKey.contains("disneyplus") || providerKey.contains("disney-plus") -> "Disney+"
+                        providerKey.contains("netflix") -> "Netflix"
+                        providerKey.contains("cbs") -> "CBS"
+                        providerKey.contains("hulu") -> "Hulu"
+                        providerKey.contains("viu") -> "Viu"
+                        providerKey.contains("peacock") -> "Peacock"
+                        providerKey.contains("paramountplus") || providerKey.contains("paramount-plus") -> "Paramount+"
+                        providerKey.contains("crunchyroll") -> "Crunchyroll"
+                        else -> "Streaming"
+                    }
                 }
                 val providerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
@@ -198,9 +202,11 @@ class PosterCacheProvider : ContentProvider() {
 
             val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                textSize = metaSize * .86f
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
+                textSize = metaSize * .90f
+                typeface = Typeface.create("sans-serif-bold", Typeface.NORMAL)
+                style = Paint.Style.FILL
+                isSubpixelText = true
+                setShadowLayer(w * .0018f, 0f, 1f, Color.BLACK)
             }
             val maxGenreWidth = w * .39f
             val measured = genrePaint.measureText(genres)
@@ -288,15 +294,16 @@ class PosterCacheProvider : ContentProvider() {
                 .buildUpon().appendQueryParameter("url", raw).build()
         }
 
-        fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
+        fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null, platformName: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v28-provider-outline-unified-spacing|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v29-hq-metadata-provider-name|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
                 .apply { if (!rating.isNullOrBlank()) appendQueryParameter("rating", rating) }
-                .apply { if (!platform.isNullOrBlank() && (platform.startsWith("https://image.tmdb.org/") || platform.startsWith("asset:"))) appendQueryParameter("platform", platform) }.build()
+                .apply { if (!platform.isNullOrBlank() && (platform.startsWith("https://image.tmdb.org/") || platform.startsWith("asset:"))) appendQueryParameter("platform", platform) }
+                .apply { if (!platformName.isNullOrBlank()) appendQueryParameter("platformName", platformName) }.build()
         }
 
         private fun sha256(value: String) =

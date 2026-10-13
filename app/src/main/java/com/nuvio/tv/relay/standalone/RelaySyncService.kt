@@ -141,6 +141,7 @@ class RelaySyncService : Service() {
                         .put("background", firstHttp(updated.optString("background"), sourceBackground, sourcePoster))
                         .put("platformLogo", firstHttp(updated.optString("platformLogo")))
                         .put("platformIcon", updated.optString("platformIcon"))
+                        .put("platformName", updated.optString("platformName"))
                         .put("titleLogo", firstHttp(updated.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                         .put("rating", ratingAndYear(updated, mt, m))
                     handler.post {
@@ -154,6 +155,7 @@ class RelaySyncService : Service() {
                     .put("background", firstHttp(enriched.optString("background"), sourceBackground, sourcePoster))
                     .put("platformLogo", firstHttp(enriched.optString("platformLogo")))
                     .put("platformIcon", enriched.optString("platformIcon"))
+                    .put("platformName", enriched.optString("platformName"))
                     .put("titleLogo", firstHttp(enriched.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                     .put("rating", ratingAndYear(enriched, mt, m)))
             }
@@ -175,7 +177,8 @@ class RelaySyncService : Service() {
                                     highestResolutionImage(item.optString("titleLogo")),
                                     item.optString("rating"),
                                     item.optString("platformIcon").takeIf { it.startsWith("asset:") }
-                                        ?: highestResolutionImage(item.optString("platformLogo"))
+                                        ?: highestResolutionImage(item.optString("platformLogo")),
+                                    item.optString("platformName")
                                 )
                                 if (art != null) contentResolver.openFileDescriptor(art, "r")?.use { }
                             }
@@ -218,7 +221,8 @@ class RelaySyncService : Service() {
             .setPosterArtAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9)
         val background = highestResolutionImage(m.optString("background")) ?: highestResolutionImage(m.optString("poster"))
         PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(m.optString("titleLogo")), m.optString("rating"),
-            m.optString("platformIcon").takeIf { it.startsWith("asset:") } ?: highestResolutionImage(m.optString("platformLogo")))
+            m.optString("platformIcon").takeIf { it.startsWith("asset:") } ?: highestResolutionImage(m.optString("platformLogo")),
+            m.optString("platformName"))
             ?.let { builder.setPosterArtUri(it) }
         m.optString("platformLogo").takeIf { it.startsWith("http") }?.let { builder.setLogoUri(Uri.parse(it)) }
         try {
