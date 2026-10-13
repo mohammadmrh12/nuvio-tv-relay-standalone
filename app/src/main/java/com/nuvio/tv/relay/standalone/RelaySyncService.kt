@@ -50,7 +50,7 @@ class RelaySyncService : Service() {
     /** One-time migration: discard every previously published relay artwork URI and cached composite. */
     private fun enforceArtworkLayoutVersion() {
         val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-        val currentVersion = 19
+        val currentVersion = 20
         if (prefs.getInt("artwork_layout_version", 0) >= currentVersion) return
         runCatching {
             existingIds().forEach { id -> deleteRelay(id) }
@@ -140,6 +140,7 @@ class RelaySyncService : Service() {
                         .put("poster", firstHttp(updated.optString("poster"), sourcePoster))
                         .put("background", firstHttp(updated.optString("background"), sourceBackground, sourcePoster))
                         .put("platformLogo", firstHttp(updated.optString("platformLogo")))
+                        .put("platformIcon", updated.optString("platformIcon"))
                         .put("titleLogo", firstHttp(updated.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                         .put("rating", ratingAndYear(updated, mt, m))
                     handler.post {
@@ -152,6 +153,7 @@ class RelaySyncService : Service() {
                     .put("name", sourceName).put("poster", firstHttp(enriched.optString("poster"), sourcePoster))
                     .put("background", firstHttp(enriched.optString("background"), sourceBackground, sourcePoster))
                     .put("platformLogo", firstHttp(enriched.optString("platformLogo")))
+                    .put("platformIcon", enriched.optString("platformIcon"))
                     .put("titleLogo", firstHttp(enriched.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                     .put("rating", ratingAndYear(enriched, mt, m)))
             }
@@ -172,7 +174,8 @@ class RelaySyncService : Service() {
                                     this, background,
                                     highestResolutionImage(item.optString("titleLogo")),
                                     item.optString("rating"),
-                                    highestResolutionImage(item.optString("platformLogo"))
+                                    item.optString("platformIcon").takeIf { it.startsWith("asset:") }
+                                        ?: highestResolutionImage(item.optString("platformLogo"))
                                 )
                                 if (art != null) contentResolver.openFileDescriptor(art, "r")?.use { }
                             }
@@ -214,7 +217,8 @@ class RelaySyncService : Service() {
             .setInternalProviderId(if (pinnedFirst) "nuvio_relay_pinned_native_first" else relayId(m)).setIntentUri(launcherIntentUri)
             .setPosterArtAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9)
         val background = highestResolutionImage(m.optString("background")) ?: highestResolutionImage(m.optString("poster"))
-        PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(m.optString("titleLogo")), m.optString("rating"), highestResolutionImage(m.optString("platformLogo")))
+        PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(m.optString("titleLogo")), m.optString("rating"),
+            m.optString("platformIcon").takeIf { it.startsWith("asset:") } ?: highestResolutionImage(m.optString("platformLogo")))
             ?.let { builder.setPosterArtUri(it) }
         m.optString("platformLogo").takeIf { it.startsWith("http") }?.let { builder.setLogoUri(Uri.parse(it)) }
         try {
@@ -287,7 +291,7 @@ class RelaySyncService : Service() {
             val value = enrichment.optString(field)
             if (value.startsWith("https://") && value.length > 12) merged.put(field, value)
         }
-        for (field in arrayOf("vote_average", "year", "overview", "runtime", "number_of_seasons", "genres")) {
+        for (field in arrayOf("platformIcon", "platformName", "vote_average", "year", "overview", "runtime", "number_of_seasons", "genres")) {
             if (enrichment.has(field) && !enrichment.isNull(field)) merged.put(field, enrichment.get(field))
         }
         return merged
@@ -322,7 +326,7 @@ class RelaySyncService : Service() {
             .map { source.optString(it).trim().removePrefix("tmdb:").removePrefix("tmdb_") }
             .firstOrNull { it.matches(Regex("\\d{1,10}")) && (it.toIntOrNull() ?: 0) > 0 }.orEmpty()
         val cacheDir = File(cacheDir, "tmdb-cache").apply { mkdirs() }
-        val keyInput = "${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
+        val keyInput = "provider-icons-v1|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
         val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
         val file = File(cacheDir, "$key.json")
         if (file.exists()) {
@@ -421,8 +425,13 @@ class RelaySyncService : Service() {
                                 (0 until providers.length()).asSequence().mapNotNull { providers.optJSONObject(it) }
                                     .firstOrNull { it.optString("logo_path").startsWith("/") }
                             }.firstOrNull()
-                        provider?.optString("logo_path")?.takeIf { it.startsWith("/") }?.let {
-                            result.put("platformLogo", "https://image.tmdb.org/t/p/w185$it")
+                        provider?.let { p ->
+                            val providerName = p.optString("provider_name").trim()
+                            if (providerName.isNotBlank()) result.put("platformName", providerName)
+                            p.optString("logo_path").takeIf { it.startsWith("/") }?.let {
+                                result.put("platformLogo", "https://image.tmdb.org/t/p/w185$it")
+                            }
+                            providerIconKey(providerName)?.let { result.put("platformIcon", "asset:$it") }
                         }
                     } catch (e: Exception) {
                         android.util.Log.d("NuvioRelay", "TMDB watch provider unavailable for ${title.take(60)}")
@@ -534,6 +543,20 @@ class RelaySyncService : Service() {
         details.addAll(genres)
         val badge = listOfNotNull(score?.let { "★ $it" }, year).joinToString("  ·  ")
         return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""
+    }
+    private fun providerIconKey(name: String): String? {
+        val n = name.lowercase(java.util.Locale.ROOT).replace("+", " plus ").replace(Regex("[^a-z0-9]+"), " ").trim()
+        return when {
+            n.contains("apple tv") -> "appletv"
+            n.contains("prime video") || n == "amazon prime video" || n == "amazon prime" -> "primevideo"
+            n == "hbo" || n.contains("hbo max") || n.contains("max") && n.contains("hbo") -> "hbo"
+            n.contains("disney") -> "disneyplus"
+            n.contains("netflix") -> "netflix"
+            n == "cbs" || n.contains("cbs all access") || n.contains("paramount plus") -> "cbs"
+            n.contains("hulu") -> "hulu"
+            n == "viu" || n.contains("viu premium") -> "viu"
+            else -> null
+        }
     }
     private fun relayId(m: JSONObject) = "nuvio_relay_${m.optString("type").lowercase()}_${m.optString("id")}"
     private fun existingIds(): Set<String> {

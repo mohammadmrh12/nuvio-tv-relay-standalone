@@ -139,10 +139,33 @@ class PosterCacheProvider : ContentProvider() {
                     }
                 }
                 if (!platformUrl.isNullOrBlank()) {
-                    val sourceLogo = decodeUrl(platformUrl, maxWidth = 240, maxHeight = 120)
+                    val sourceLogo = if (platformUrl.startsWith("asset:")) {
+                        val assetName = platformUrl.removePrefix("asset:").replace(Regex("[^a-zA-Z0-9_-]"), "")
+                        runCatching { requireNotNull(context).assets.open("provider-icons/$assetName.png").use { BitmapFactory.decodeStream(it) } }.getOrNull()
+                    } else decodeUrl(platformUrl, maxWidth = 240, maxHeight = 120)
                     if (sourceLogo != null) {
-                        // Keep TMDB's original provider artwork and colors. Do not recolor pixels:
-                        // converting a colored/opaque provider icon to white creates a white square.
+                        // Bundled provider wordmarks are white silhouettes with true alpha transparency.
+                        // TMDB's square app icons are retained only as a fallback for unmapped providers.
+                        if (platformUrl.startsWith("asset:")) {
+                            val mutable = sourceLogo.copy(Bitmap.Config.ARGB_8888, true)
+                            sourceLogo.recycle()
+                            val px = IntArray(mutable.width * mutable.height)
+                            mutable.getPixels(px, 0, mutable.width, 0, 0, mutable.width, mutable.height)
+                            for (i in px.indices) px[i] = Color.argb(Color.alpha(px[i]), 255, 255, 255)
+                            mutable.setPixels(px, 0, mutable.width, 0, 0, mutable.width, mutable.height)
+                            // Draw the white wordmark, retaining the original logo proportions.
+                            val maxLogoH = metaSize * 1.35f
+                            val maxLogoW = metaSize * 3.8f
+                            val scale = minOf(maxLogoW / mutable.width, maxLogoH / mutable.height)
+                            val logoW = mutable.width * scale
+                            val logoH = mutable.height * scale
+                            val logoGap = metaSize * .60f
+                            val logoX = metadataX + logoGap
+                            val logoY = metaBaseline - metaSize * .78f - logoH / 2f
+                            val logoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { alpha = 255; setShadowLayer(w * .0012f, 0f, 1f, Color.BLACK) }
+                            canvas.drawBitmap(mutable, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), logoPaint)
+                            logoPaint.clearShadowLayer(); mutable.recycle()
+                        } else {
                         val maxLogoH = metaSize * 1.35f
                         val maxLogoW = metaSize * 3.8f
                         val scale = minOf(maxLogoW / sourceLogo.width, maxLogoH / sourceLogo.height)
@@ -158,6 +181,7 @@ class PosterCacheProvider : ContentProvider() {
                         canvas.drawBitmap(sourceLogo, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), logoPaint)
                         logoPaint.clearShadowLayer()
                         sourceLogo.recycle()
+                        }
                     }
                 }
             }
@@ -256,12 +280,12 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v23-original-provider-logo|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v24-bundled-provider-wordmarks|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
                 .apply { if (!rating.isNullOrBlank()) appendQueryParameter("rating", rating) }
-                .apply { if (!platform.isNullOrBlank() && platform.startsWith("https://image.tmdb.org/")) appendQueryParameter("platform", platform) }.build()
+                .apply { if (!platform.isNullOrBlank() && (platform.startsWith("https://image.tmdb.org/") || platform.startsWith("asset:"))) appendQueryParameter("platform", platform) }.build()
         }
 
         private fun sha256(value: String) =
