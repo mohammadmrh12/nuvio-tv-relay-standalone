@@ -67,7 +67,7 @@ Launcher discussion / details: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuL
 
 ## Download
 
-The repository includes a debug APK at [the latest experimental release](https://github.com/mohammadmrh12/nuvio-tv-relay-standalone/releases/tag/v0.1.0-debug). Android may warn that it is an unknown app; install only if you trust the source. A signed production release is not available yet.
+The repository includes a debug APK at [the latest experimental release](https://github.com/mohammadmrh12/nuvio-tv-relay-standalone/releases/latest). Android may warn that it is an unknown app; install only if you trust the source. A signed production release is not available yet.
 
 ## Build from source
 
