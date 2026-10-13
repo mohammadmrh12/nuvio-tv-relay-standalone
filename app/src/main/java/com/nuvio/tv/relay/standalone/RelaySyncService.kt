@@ -114,7 +114,7 @@ class RelaySyncService : Service() {
             val all = linkedMapOf<String, JSONObject>()
             // Process a bounded batch per catalog visit. Two items per visit made a 100-title
             // catalog take hours to enrich when many catalogs were selected.
-            val tmdbBatchSize = 12
+            val tmdbBatchSize = 18
             val offsetIdentity = "$addon|${catalog.optString("type")}|${catalog.optString("id")}"
             val offsetDigest = MessageDigest.getInstance("SHA-256").digest(offsetIdentity.toByteArray())
                 .take(8).joinToString("") { "%02x".format(it) }
@@ -419,7 +419,7 @@ class RelaySyncService : Service() {
                     try {
                         val providersResponse = tmdbGet("https://api.themoviedb.org/3/$providerEndpoint/$contentId/watch/providers", token)
                         val country = providersResponse.optJSONObject("results")?.optJSONObject("US")
-                        val provider = sequenceOf("flatrate", "free", "ads")
+                        val provider = sequenceOf("flatrate", "free", "ads", "rent", "buy")
                             .mapNotNull { category ->
                                 val providers = country?.optJSONArray(category) ?: return@mapNotNull null
                                 (0 until providers.length()).asSequence().mapNotNull { providers.optJSONObject(it) }

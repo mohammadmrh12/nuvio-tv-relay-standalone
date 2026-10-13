@@ -146,7 +146,7 @@ class PosterCacheProvider : ContentProvider() {
                     val sourceLogo = if (platformUrl.startsWith("asset:")) {
                         val assetName = platformUrl.removePrefix("asset:").replace(Regex("[^a-zA-Z0-9_-]"), "")
                         runCatching { requireNotNull(context).assets.open("provider-icons/$assetName.png").use { BitmapFactory.decodeStream(it) } }.getOrNull()
-                    } else decodeUrl(platformUrl, maxWidth = 240, maxHeight = 120)
+                    } else decodeUrl(platformUrl, maxWidth = 640, maxHeight = 320)
                     if (sourceLogo != null) {
                         // Bundled provider wordmarks are white silhouettes with true alpha transparency.
                         // TMDB's square app icons are retained only as a fallback for unmapped providers.
@@ -158,26 +158,32 @@ class PosterCacheProvider : ContentProvider() {
                             for (i in px.indices) px[i] = Color.argb(Color.alpha(px[i]), 255, 255, 255)
                             mutable.setPixels(px, 0, mutable.width, 0, 0, mutable.width, mutable.height)
                             // Draw the white wordmark, retaining the original logo proportions.
-                            val maxLogoH = metaSize * 1.35f
-                            val maxLogoW = metaSize * 3.8f
+                            val maxLogoH = metaSize * .92f
+                            val maxLogoW = metaSize * 2.9f
                             val scale = minOf(maxLogoW / mutable.width, maxLogoH / mutable.height)
                             val logoW = mutable.width * scale
                             val logoH = mutable.height * scale
-                            val logoGap = metaSize * .60f
-                            val logoX = metadataX + logoGap
-                            val logoY = metaBaseline - metaSize * .78f - logoH / 2f
+                            val logoGap = metaSize * .46f
+                            val separatorX = metadataX + logoGap * .48f
+                            val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; strokeWidth = w * .0011f; setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK) }
+                            canvas.drawLine(separatorX, metaBaseline - metaSize * .9f, separatorX, metaBaseline + metaSize * .20f, dividerPaint)
+                            val logoX = separatorX + logoGap * .60f
+                            val logoY = metaBaseline - metaSize * .48f - logoH / 2f
                             val logoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { alpha = 255; setShadowLayer(w * .0012f, 0f, 1f, Color.BLACK) }
                             canvas.drawBitmap(mutable, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), logoPaint)
                             logoPaint.clearShadowLayer(); mutable.recycle()
                         } else {
-                        val maxLogoH = metaSize * 1.35f
-                        val maxLogoW = metaSize * 3.8f
+                        val maxLogoH = metaSize * .92f
+                        val maxLogoW = metaSize * 2.9f
                         val scale = minOf(maxLogoW / sourceLogo.width, maxLogoH / sourceLogo.height)
                         val logoW = sourceLogo.width * scale
                         val logoH = sourceLogo.height * scale
-                        val logoGap = metaSize * .60f
-                        val logoX = metadataX + logoGap
-                        val logoY = metaBaseline - metaSize * .78f - logoH / 2f
+                        val logoGap = metaSize * .46f
+                        val separatorX = metadataX + logoGap * .48f
+                        val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; strokeWidth = w * .0011f; setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK) }
+                        canvas.drawLine(separatorX, metaBaseline - metaSize * .9f, separatorX, metaBaseline + metaSize * .20f, dividerPaint)
+                        val logoX = separatorX + logoGap * .60f
+                        val logoY = metaBaseline - metaSize * .48f - logoH / 2f
                         val logoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
                             alpha = 255
                             setShadowLayer(w * .0012f, 0f, 1f, Color.BLACK)
@@ -284,7 +290,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v25-provider-wordmarks|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v26-balanced-provider-logos|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
