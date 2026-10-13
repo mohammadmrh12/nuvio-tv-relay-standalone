@@ -100,48 +100,76 @@ class PosterCacheProvider : ContentProvider() {
                 style = Paint.Style.FILL
                 setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
             }
+            var metadataX = left
             if (badgeText.isNotBlank()) {
-                val padX = metaSize * .34f
-                val padY = metaSize * .15f
-                val badgeWidth = tp.measureText(badgeText)
-                val badgeRect = RectF(left, metaBaseline - metaSize + padY,
-                    left + badgeWidth + padX * 2f, metaBaseline + padY)
+                // Separate rating and year into individual outlined badges, as in the reference.
+                val parts = badgeText.split(Regex("\\s+[·|]\\s+|\\s{2,}")).filter { it.isNotBlank() }
                 val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
                     style = Paint.Style.STROKE
                     strokeWidth = w * .0012f
                     setShadowLayer(w * .002f, 0f, 1f, Color.BLACK)
                 }
-                canvas.drawRoundRect(badgeRect, metaSize * .20f, metaSize * .20f, badgePaint)
-                canvas.drawText(badgeText, left + padX, metaBaseline - metaSize * .02f, tp)
+                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textSize = metaSize
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    style = Paint.Style.FILL
+                    setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
+                }
+                val padX = metaSize * .34f
+                val padY = metaSize * .15f
+                val badgeTop = metaBaseline - metaSize + padY
+                val badgeBottom = metaBaseline + padY
+                parts.forEachIndexed { index, part ->
+                    val textWidth = textPaint.measureText(part)
+                    val rect = RectF(metadataX, badgeTop, metadataX + textWidth + padX * 2f, badgeBottom)
+                    canvas.drawRoundRect(rect, metaSize * .20f, metaSize * .20f, badgePaint)
+                    canvas.drawText(part, metadataX + padX, metaBaseline - metaSize * .02f, textPaint)
+                    metadataX = rect.right
+                    if (index < parts.lastIndex) {
+                        val dividerX = metadataX + metaSize * .42f
+                        val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            strokeWidth = w * .0013f
+                            setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK)
+                        }
+                        canvas.drawLine(dividerX, badgeTop - metaSize * .04f, dividerX, badgeBottom + metaSize * .04f, dividerPaint)
+                        metadataX = dividerX + metaSize * .42f
+                    }
+                }
                 if (!platformUrl.isNullOrBlank()) {
                     val sourceLogo = decodeUrl(platformUrl, maxWidth = 240, maxHeight = 120)
                     if (sourceLogo != null) {
-                        // Network decoders may return immutable bitmaps; create a mutable ARGB copy
-                        // before changing pixels, otherwise setPixels throws and the entire Hero fails.
                         val mutableLogo = sourceLogo.copy(Bitmap.Config.ARGB_8888, true)
                         sourceLogo.recycle()
-                        // Convert the provider's colored mark to solid white while preserving transparency.
-                        val whitePixels = IntArray(mutableLogo.width * mutableLogo.height)
-                        mutableLogo.getPixels(whitePixels, 0, mutableLogo.width, 0, 0, mutableLogo.width, mutableLogo.height)
-                        for (i in whitePixels.indices) {
-                            val pixel = whitePixels[i]
-                            // TMDB provider marks may be opaque JPEGs with a black background.
-                            // Turn pixel brightness into alpha so the background disappears when whitened.
-                            val sourceAlpha = Color.alpha(pixel)
+                        val pixels = IntArray(mutableLogo.width * mutableLogo.height)
+                        mutableLogo.getPixels(pixels, 0, mutableLogo.width, 0, 0, mutableLogo.width, mutableLogo.height)
+                        for (i in pixels.indices) {
+                            val pixel = pixels[i]
+                            val alpha = Color.alpha(pixel)
                             val brightness = maxOf(Color.red(pixel), Color.green(pixel), Color.blue(pixel))
-                            val alpha = (sourceAlpha * brightness / 255).coerceIn(0, 255)
-                            whitePixels[i] = Color.argb(alpha, 255, 255, 255)
+                            // Preserve the silhouette while making the logo white; avoid turning its
+                            // entire rectangular background into an opaque white block.
+                            val outAlpha = (alpha * brightness / 255).coerceIn(0, 255)
+                            pixels[i] = Color.argb(outAlpha, 255, 255, 255)
                         }
-                        mutableLogo.setPixels(whitePixels, 0, mutableLogo.width, 0, 0, mutableLogo.width, mutableLogo.height)
-                        val maxLogoH = metaSize * 1.20f
+                        mutableLogo.setPixels(pixels, 0, mutableLogo.width, 0, 0, mutableLogo.width, mutableLogo.height)
+                        val maxLogoH = metaSize * 1.18f
                         val maxLogoW = metaSize * 3.8f
                         val scale = minOf(maxLogoW / mutableLogo.width, maxLogoH / mutableLogo.height)
                         val logoW = mutableLogo.width * scale
                         val logoH = mutableLogo.height * scale
-                        val gap = metaSize * .70f
-                        val logoX = badgeRect.right + gap
+                        val logoGap = metaSize * .60f
+                        val logoX = metadataX + logoGap
                         val logoY = metaBaseline - metaSize * .78f - logoH / 2f
+                        val dividerX = metadataX + metaSize * .28f
+                        val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            strokeWidth = w * .0013f
+                            setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK)
+                        }
+                        canvas.drawLine(dividerX, badgeTop - metaSize * .04f, dividerX, badgeBottom + metaSize * .04f, dividerPaint)
                         paint.alpha = 255
                         paint.setShadowLayer(w * .0018f, 0f, 1f, Color.BLACK)
                         canvas.drawBitmap(mutableLogo, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), paint)
@@ -245,7 +273,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v20-white-platform-mark|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v21-separated-metadata|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
