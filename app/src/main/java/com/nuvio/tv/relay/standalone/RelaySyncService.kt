@@ -428,16 +428,17 @@ class RelaySyncService : Service() {
                                 val providers = country?.optJSONArray(category) ?: return@mapNotNull null
                                 (0 until providers.length()).asSequence().mapNotNull { providers.optJSONObject(it) }
                                     .filter { it.optString("logo_path").startsWith("/") }
-                                    .sortedBy { if (providerIconKey(it.optString("provider_name")) != null) 0 else 1 }
+                                    .map { candidate -> candidate to providerDisplayName(candidate.optString("provider_name")) }
+                                    .filter { (_, displayName) -> displayName.isNotBlank() }
+                                    .sortedBy { (candidate, _) -> if (providerIconKey(candidate.optString("provider_name")) != null) 0 else 1 }
                                     .firstOrNull()
                             }.firstOrNull()
-                        provider?.let { p ->
-                            val providerName = p.optString("provider_name").trim()
-                            if (providerName.isNotBlank()) result.put("platformName", providerName)
+                        provider?.let { (p, displayName) ->
+                            result.put("platformName", displayName)
                             p.optString("logo_path").takeIf { it.startsWith("/") }?.let {
                                 result.put("platformLogo", "https://image.tmdb.org/t/p/w185$it")
                             }
-                            providerIconKey(providerName)?.let { result.put("platformIcon", "asset:$it") }
+                            providerIconKey(p.optString("provider_name"))?.let { result.put("platformIcon", "asset:$it") }
                         }
                     } catch (e: Exception) {
                         android.util.Log.d("NuvioRelay", "TMDB watch provider unavailable for ${title.take(60)}")
@@ -556,6 +557,42 @@ class RelaySyncService : Service() {
         val badge = listOfNotNull(score?.let { "★ $it" }, year).joinToString("  ·  ")
         return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""
     }
+    private fun providerDisplayName(rawName: String): String {
+        val n = rawName.lowercase(java.util.Locale.ROOT).replace("+", " plus ").replace(Regex("[^a-z0-9]+"), " ").trim()
+        return when {
+            n.contains("apple tv") -> "Apple TV"
+            n.contains("prime video") || n == "amazon prime video" || n == "amazon prime" -> "Prime Video"
+            n.contains("peacock") -> "Peacock"
+            n.contains("paramount") -> "Paramount"
+            n == "hbo" || n.contains("hbo max") -> "HBO"
+            n == "max" || n.startsWith("max ") -> "Max"
+            n.contains("disney") -> "Disney"
+            n.contains("netflix") -> "Netflix"
+            n == "cbs" || n.contains("cbs all access") -> "CBS"
+            n.contains("hulu") -> "Hulu"
+            n.contains("crunchyroll") -> "Crunchyroll"
+            n == "viu" || n.contains("viu premium") -> "Viu"
+            n.contains("youtube") -> "YouTube"
+            n.contains("starz") -> "Starz"
+            n.contains("mgm") -> "MGM"
+            n.contains("showtime") -> "Showtime"
+            n.contains("discovery") -> "Discovery"
+            n.contains("fubo") -> "Fubo"
+            n.contains("tubi") -> "Tubi"
+            n.contains("pluto") -> "Pluto TV"
+            n.contains("tnt") -> "TNT"
+            n.contains("criterion") -> "Criterion"
+            n.contains("kanopy") -> "Kanopy"
+            n.contains("mubi") -> "MUBI"
+            n.contains("roku") -> "Roku"
+            n.contains("britbox") -> "BritBox"
+            n.contains("acorn") -> "Acorn TV"
+            n.contains("shudder") -> "Shudder"
+            n.contains("plex") -> "Plex"
+            else -> rawName.trim().replace(Regex("(?i)\\s+(premium|plus|channel|channels|subscription)$"), "").trim()
+        }
+    }
+
     private fun providerIconKey(name: String): String? {
         val n = name.lowercase(java.util.Locale.ROOT).replace("+", " plus ").replace(Regex("[^a-z0-9]+"), " ").trim()
         return when {
