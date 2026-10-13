@@ -50,7 +50,7 @@ class RelaySyncService : Service() {
     /** One-time migration: discard every previously published relay artwork URI and cached composite. */
     private fun enforceArtworkLayoutVersion() {
         val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-        val currentVersion = 17
+        val currentVersion = 18
         if (prefs.getInt("artwork_layout_version", 0) >= currentVersion) return
         runCatching {
             existingIds().forEach { id -> deleteRelay(id) }
@@ -416,8 +416,11 @@ class RelaySyncService : Service() {
                         val providersResponse = tmdbGet("https://api.themoviedb.org/3/$providerEndpoint/$contentId/watch/providers", token)
                         val country = providersResponse.optJSONObject("results")?.optJSONObject("US")
                         val provider = sequenceOf("flatrate", "free", "ads")
-                            .mapNotNull { country?.optJSONArray(it)?.optJSONObject(0) }
-                            .firstOrNull { it.optString("logo_path").startsWith("/") }
+                            .mapNotNull { category ->
+                                val providers = country?.optJSONArray(category) ?: return@mapNotNull null
+                                (0 until providers.length()).asSequence().mapNotNull { providers.optJSONObject(it) }
+                                    .firstOrNull { it.optString("logo_path").startsWith("/") }
+                            }.firstOrNull()
                         provider?.optString("logo_path")?.takeIf { it.startsWith("/") }?.let {
                             result.put("platformLogo", "https://image.tmdb.org/t/p/w185$it")
                         }
@@ -487,30 +490,48 @@ class RelaySyncService : Service() {
     }
 
     private fun ratingAndYear(m: JSONObject, type: String, fallback: JSONObject = JSONObject()): String {
-        val score = sequenceOf(m.optString("imdbRating"), m.optString("rating"))
-            .map { it.trim() }
-            .firstOrNull { it.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (it.toDoubleOrNull()?.let { n -> n in 0.0..10.0 } == true) }
-            ?: m.optDouble("vote_average", -1.0).takeIf { it in 0.0..10.0 }
-                ?.let { String.format(java.util.Locale.US, "%.1f", it) }
-            ?: fallback.optDouble("vote_average", -1.0).takeIf { it in 0.0..10.0 }
-                ?.let { String.format(java.util.Locale.US, "%.1f", it) }
-        val yearSource = sequenceOf(
-            m.optString("year"), m.optString("releaseInfo"), m.optString("released"),
-            m.optString("release_date"), m.optString("first_air_date"),
-            fallback.optString("year"), fallback.optString("releaseInfo"), fallback.optString("released"),
-            fallback.optString("release_date"), fallback.optString("first_air_date")
-        ).firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
-        val year = yearSource?.let { Regex("(19|20)\\d{2}").find(it)?.value }
-        val genres = m.optJSONArray("genres")
-        val genreNames = mutableListOf<String>()
-        if (genres != null) for (i in 0 until minOf(genres.length(), 2)) {
-            val rawGenre = genres.opt(i)
-            val g = (if (rawGenre is JSONObject) rawGenre.optString("name") else rawGenre.toString()).trim()
-            if (g.isNotBlank() && g !in genreNames) genreNames.add(g)
+        // Different addons use different field names and sometimes send null/empty TMDB fields.
+        // Prefer valid TMDB values, then fall back to the original catalog item.
+        fun validScore(obj: JSONObject): String? {
+            val keys = arrayOf("vote_average", "imdbRating", "imdb_rating", "rating", "score")
+            for (key in keys) {
+                val raw = obj.opt(key)?.toString()?.trim().orEmpty()
+                if (raw.isBlank() || raw.equals("null", true) || raw.equals("N/A", true)) continue
+                val number = raw.toDoubleOrNull() ?: continue
+                if (number in 0.1..10.0) return String.format(java.util.Locale.US, "%.1f", number)
+            }
+            return null
         }
+        val score = validScore(m) ?: validScore(fallback)
+        val yearKeys = arrayOf("year", "releaseInfo", "released", "release_date", "first_air_date", "releaseDate", "premiered", "date")
+        fun validYear(obj: JSONObject): String? {
+            for (key in yearKeys) {
+                val raw = obj.opt(key)?.toString()?.trim().orEmpty()
+                val year = Regex("(19|20)\\d{2}").find(raw)?.value
+                if (year != null) return year
+            }
+            return null
+        }
+        val year = validYear(m) ?: validYear(fallback)
+        val genres = mutableListOf<String>()
+        fun collectGenres(obj: JSONObject) {
+            val arr = obj.optJSONArray("genres") ?: obj.optJSONArray("genre")
+            if (arr != null) for (i in 0 until arr.length()) {
+                val raw = arr.opt(i)
+                val value = (if (raw is JSONObject) raw.optString("name") else raw?.toString()).orEmpty().trim()
+                if (value.isNotBlank() && !value.equals("null", true) && value !in genres && genres.size < 2) genres.add(value)
+            }
+            if (genres.size < 2) {
+                val raw = obj.optString("genre").ifBlank { obj.optString("genres") }
+                raw.split(Regex("[,|/•]")).map { it.trim() }.filter { it.isNotBlank() && !it.equals("null", true) }
+                    .forEach { if (it !in genres && genres.size < 2) genres.add(it) }
+            }
+        }
+        collectGenres(m)
+        collectGenres(fallback)
         val details = mutableListOf<String>()
         details.add(if (type.equals("series", true) || type.equals("tv", true) || type.equals("show", true)) "Series" else "Movie")
-        details.addAll(genreNames)
+        details.addAll(genres)
         val badge = listOfNotNull(score?.let { "★ $it" }, year).joinToString("  ·  ")
         return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""
     }

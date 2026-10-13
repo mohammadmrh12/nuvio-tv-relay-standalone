@@ -9,8 +9,8 @@ android {
         applicationId = "com.nuvio.tv.relay.standalone"
         minSdk = 26
         targetSdk = 32
-        versionCode = 12
-        versionName = "0.2.1"
+        versionCode = 13
+        versionName = "0.2.2"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
