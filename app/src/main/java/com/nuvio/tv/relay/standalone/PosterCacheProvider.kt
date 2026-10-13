@@ -88,7 +88,11 @@ class PosterCacheProvider : ContentProvider() {
             // Metadata is anchored to the background canvas, never to logo dimensions.
             val marker = " ||| "
             val split = rating.indexOf(marker)
-            val genres = if (split >= 0) rating.substring(0, split).trim() else rating
+            val genres = (if (split >= 0) rating.substring(0, split).trim() else rating)
+                .replace(Regex("\\s*\\[\\s*"), " ")
+                .replace(Regex("\\s*]\\s*"), " ")
+                .replace(Regex("[\"']"), "")
+                .replace(Regex("\\s+"), " ").trim()
             val badgeText = if (split >= 0) rating.substring(split + marker.length).trim() else ""
             val left = w * .045f
             val metaSize = w * .0105f
@@ -280,7 +284,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v24-bundled-provider-wordmarks|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v25-provider-wordmarks|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

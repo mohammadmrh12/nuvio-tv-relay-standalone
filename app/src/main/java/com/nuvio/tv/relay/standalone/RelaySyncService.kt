@@ -114,7 +114,7 @@ class RelaySyncService : Service() {
             val all = linkedMapOf<String, JSONObject>()
             // Process a bounded batch per catalog visit. Two items per visit made a 100-title
             // catalog take hours to enrich when many catalogs were selected.
-            val tmdbBatchSize = 6
+            val tmdbBatchSize = 12
             val offsetIdentity = "$addon|${catalog.optString("type")}|${catalog.optString("id")}"
             val offsetDigest = MessageDigest.getInstance("SHA-256").digest(offsetIdentity.toByteArray())
                 .take(8).joinToString("") { "%02x".format(it) }
@@ -411,7 +411,7 @@ class RelaySyncService : Service() {
                     ?: match?.optString("backdrop_path")?.takeIf { it.startsWith("/") }
                 if (posterPath != null) result.put("poster", "https://image.tmdb.org/t/p/original$posterPath")
                 if (backdropPath != null) result.put("background", "https://image.tmdb.org/t/p/original$backdropPath")
-                // Resolve the actual streaming platform for Iraq. Prefer subscription providers;
+                // Resolve the actual streaming platform for the configured US region. Prefer subscription providers;
                 // free/ad-supported services are fallbacks. Rental and purchase storefronts are not platforms.
                 val providerEndpoint = if (isTv) "tv" else "movie"
                 val contentId = chosen.optInt("id", 0)
@@ -423,7 +423,9 @@ class RelaySyncService : Service() {
                             .mapNotNull { category ->
                                 val providers = country?.optJSONArray(category) ?: return@mapNotNull null
                                 (0 until providers.length()).asSequence().mapNotNull { providers.optJSONObject(it) }
-                                    .firstOrNull { it.optString("logo_path").startsWith("/") }
+                                    .filter { it.optString("logo_path").startsWith("/") }
+                                    .sortedBy { if (providerIconKey(it.optString("provider_name")) != null) 0 else 1 }
+                                    .firstOrNull()
                             }.firstOrNull()
                         provider?.let { p ->
                             val providerName = p.optString("provider_name").trim()
@@ -532,8 +534,14 @@ class RelaySyncService : Service() {
             }
             if (genres.size < 2) {
                 val raw = obj.optString("genre").ifBlank { obj.optString("genres") }
-                raw.split(Regex("[,|/•]")).map { it.trim() }.filter { it.isNotBlank() && !it.equals("null", true) }
-                    .forEach { if (it !in genres && genres.size < 2) genres.add(it) }
+                raw.trim().removePrefix("[").removeSuffix("]")
+                    .split(Regex("[,|/•]"))
+                    .map { it.trim().trim('\'', '\"', '[', ']').removePrefix("[").removeSuffix("]").trim() }
+                    .filter { it.isNotBlank() && !it.equals("null", true) }
+                    .forEach { value ->
+                        val cleaned = value.replace(Regex("\\s+"), " ").trim()
+                        if (cleaned !in genres && genres.none { it.equals(cleaned, true) } && genres.size < 2) genres.add(cleaned)
+                    }
             }
         }
         collectGenres(m)
@@ -549,11 +557,15 @@ class RelaySyncService : Service() {
         return when {
             n.contains("apple tv") -> "appletv"
             n.contains("prime video") || n == "amazon prime video" || n == "amazon prime" -> "primevideo"
-            n == "hbo" || n.contains("hbo max") || n.contains("max") && n.contains("hbo") -> "hbo"
+            n.contains("peacock") -> "peacock"
+            n.contains("paramount") -> "paramountplus"
+            n == "hbo" || n.contains("hbo max") -> "hbo"
+            n == "max" || n.startsWith("max ") -> "max"
             n.contains("disney") -> "disneyplus"
             n.contains("netflix") -> "netflix"
-            n == "cbs" || n.contains("cbs all access") || n.contains("paramount plus") -> "cbs"
+            n == "cbs" || n.contains("cbs all access") -> "cbs"
             n.contains("hulu") -> "hulu"
+            n.contains("crunchyroll") -> "crunchyroll"
             n == "viu" || n.contains("viu premium") -> "viu"
             else -> null
         }
