@@ -144,56 +144,58 @@ class PosterCacheProvider : ContentProvider() {
                 }
 
             }
-                // Render the provider as readable text rather than a low-resolution logo.
-                // A dark translucent capsule keeps the provider legible over both light and dark artwork.
-                if (!platformUrl.isNullOrBlank()) {
-                    val providerKey = platformUrl.removePrefix("asset:").substringBefore(".")
-                    val providerName = when (providerKey.lowercase()) {
-                        "appletv", "apple-tv-plus" -> "Apple TV+"
-                        "primevideo", "prime-video" -> "Prime Video"
-                        "hbo", "max" -> if (providerKey.equals("max", true)) "Max" else "HBO"
-                        "disneyplus", "disney-plus" -> "Disney+"
-                        "netflix" -> "Netflix"
-                        "cbs" -> "CBS"
-                        "hulu" -> "Hulu"
-                        "viu" -> "Viu"
-                        "peacock" -> "Peacock"
-                        "paramountplus", "paramount-plus" -> "Paramount+"
-                        "crunchyroll" -> "Crunchyroll"
-                        else -> "Streaming"
-                    }
-                    if (providerName.isNotBlank()) {
-                        val providerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.WHITE
-                            textSize = metaSize * .84f
-                            typeface = Typeface.create("sans-serif-bold", Typeface.NORMAL)
-                            style = Paint.Style.FILL
-                            setShadowLayer(w * .001f, 0f, 0f, Color.BLACK)
-                        }
-                        val padX = metaSize * .42f
-                        val padY = metaSize * .20f
-                        val providerW = providerTextPaint.measureText(providerName)
-                        val providerH = providerTextPaint.textSize
-                        val gap = metaSize * .48f
-                        val separatorX = metadataX + gap * .48f
-                        val separatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.WHITE
-                            alpha = 220
-                            strokeWidth = w * .0012f
-                            setShadowLayer(w * .001f, 0f, 1f, Color.BLACK)
-                        }
-                        canvas.drawLine(separatorX, metaBaseline - metaSize * .92f, separatorX, metaBaseline + metaSize * .24f, separatorPaint)
-                        val pillLeft = separatorX + gap * .62f
-                        val pillTop = metaBaseline - providerH + padY * .12f
-                        val pillRect = RectF(pillLeft, pillTop, pillLeft + providerW + padX * 2f, metaBaseline + padY * .35f)
-                        val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.argb(190, 0, 0, 0)
-                            style = Paint.Style.FILL
-                        }
-                        canvas.drawRoundRect(pillRect, metaSize * .22f, metaSize * .22f, pillPaint)
-                        canvas.drawText(providerName, pillLeft + padX, metaBaseline - metaSize * .02f, providerTextPaint)
-                    }
+            // Match the provider badge to the rating/year badges: transparent fill,
+            // same outline, type size, corner radius and inter-badge spacing.
+            if (!platformUrl.isNullOrBlank()) {
+                val providerKey = platformUrl.removePrefix("asset:").substringBefore(".").lowercase()
+                val providerName = when {
+                    providerKey.contains("appletv") || providerKey.contains("apple-tv") -> "Apple TV+"
+                    providerKey.contains("primevideo") || providerKey.contains("prime-video") -> "Prime Video"
+                    providerKey == "hbo" -> "HBO"
+                    providerKey == "max" -> "Max"
+                    providerKey.contains("disneyplus") || providerKey.contains("disney-plus") -> "Disney+"
+                    providerKey.contains("netflix") -> "Netflix"
+                    providerKey.contains("cbs") -> "CBS"
+                    providerKey.contains("hulu") -> "Hulu"
+                    providerKey.contains("viu") -> "Viu"
+                    providerKey.contains("peacock") -> "Peacock"
+                    providerKey.contains("paramountplus") || providerKey.contains("paramount-plus") -> "Paramount+"
+                    providerKey.contains("crunchyroll") -> "Crunchyroll"
+                    else -> "Streaming"
                 }
+                val providerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textSize = metaSize
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    style = Paint.Style.FILL
+                    setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
+                }
+                val providerOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    style = Paint.Style.STROKE
+                    strokeWidth = w * .0012f
+                    setShadowLayer(w * .002f, 0f, 1f, Color.BLACK)
+                }
+                val badgePadX = metaSize * .34f
+                val badgePadY = metaSize * .15f
+                val providerWidth = providerPaint.measureText(providerName)
+                val providerRect = RectF(
+                    metadataX + metaSize * .42f,
+                    metaBaseline - metaSize + badgePadY,
+                    metadataX + metaSize * .42f + providerWidth + badgePadX * 2f,
+                    metaBaseline + badgePadY
+                )
+                val separatorX = metadataX + metaSize * .21f
+                val separatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    strokeWidth = w * .0013f
+                    setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK)
+                }
+                canvas.drawLine(separatorX, providerRect.top - metaSize * .04f, separatorX, providerRect.bottom + metaSize * .04f, separatorPaint)
+                canvas.drawRoundRect(providerRect, metaSize * .20f, metaSize * .20f, providerOutline)
+                canvas.drawText(providerName, providerRect.left + badgePadX, metaBaseline - metaSize * .02f, providerPaint)
+            }
+
             val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 textSize = metaSize * .86f
@@ -289,7 +291,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v27-provider-text-contrast|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v28-provider-outline-unified-spacing|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
