@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -20,13 +19,16 @@ import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RelaySyncService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val artworkExecutor = Executors.newSingleThreadExecutor()
+    private val tmdbExecutor = Executors.newSingleThreadExecutor()
+    private val tmdbInFlight = ConcurrentHashMap.newKeySet<String>()
     private val artworkWarmupRunning = AtomicBoolean(false)
-    private var busy = false
+    private val syncRunning = AtomicBoolean(false)
     override fun onCreate() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 26) {
@@ -68,13 +70,16 @@ class RelaySyncService : Service() {
             if (!getSharedPreferences("relay", MODE_PRIVATE).getBoolean("auto_sync", true)) {
                 stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return
             }
-            if (!busy) Thread { syncNow() }.start()
+            if (syncRunning.compareAndSet(false, true)) {
+                Thread {
+                    try { syncNow() }
+                    finally { syncRunning.set(false) }
+                }.start()
+            }
             handler.postDelayed(this, 15 * 1000L)
         }
     }
     private fun syncNow() {
-        if (busy) return
-        busy = true
         try {
             val prefs = getSharedPreferences("relay", MODE_PRIVATE)
             val addons = prefs.getStringSet("addons", emptySet()) ?: emptySet()
@@ -97,25 +102,58 @@ class RelaySyncService : Service() {
             // Stable ordering keeps the persisted cursor aligned with the user's selected catalogs.
             candidates.sortBy { "${it.second.optString("name")}|${it.first}|${it.second.optString("type")}|${it.second.optString("id")}" }
             // Background sync rotates the published catalog and persists the cursor across restarts.
+            val rotationEnabled = prefs.getBoolean("rotation_enabled", true)
             val cursor = prefs.getInt("service_rotation_index", 0).mod(candidates.size)
             val (addon, catalog, logo) = candidates[cursor]
-            prefs.edit().putInt("service_rotation_index", (cursor + 1).mod(candidates.size)).apply()
+            if (rotationEnabled) prefs.edit().putInt("service_rotation_index", (cursor + 1).mod(candidates.size)).apply()
             val type = catalog.optString("type")
             val id = catalog.optString("id")
             val base = addon.removeSuffix("/manifest.json").trimEnd('/')
             val url = "$base/catalog/${enc(type)}/${enc(id)}.json?skip=0&limit=100"
             val metas = try { json(url).optJSONArray("metas") } catch (_: Exception) { null } ?: return
             val all = linkedMapOf<String, JSONObject>()
+            // Process a bounded batch per catalog visit. Two items per visit made a 100-title
+            // catalog take hours to enrich when many catalogs were selected.
+            val tmdbBatchSize = 6
+            val offsetIdentity = "$addon|${catalog.optString("type")}|${catalog.optString("id")}"
+            val offsetDigest = MessageDigest.getInstance("SHA-256").digest(offsetIdentity.toByteArray())
+                .take(8).joinToString("") { "%02x".format(it) }
+            val tmdbOffsetKey = "tmdb_batch_offset_$offsetDigest"
+            val tmdbBatchStart = prefs.getInt(tmdbOffsetKey, 0).mod(maxOf(1, metas.length()))
+            prefs.edit().putInt(tmdbOffsetKey, (tmdbBatchStart + tmdbBatchSize).mod(maxOf(1, metas.length()))).apply()
             for (j in 0 until metas.length()) {
                 val m = metas.optJSONObject(j) ?: continue
-                val mid = m.optString("id")
+                val mid = sequenceOf("id", "_id", "imdb_id", "imdbId")
+                    .map { m.optString(it).trim() }.firstOrNull { it.isNotBlank() }.orEmpty()
                 val mt = m.optString("type", type).ifBlank { type }
-                if (mid.isBlank() || m.optString("name").isBlank()) continue
+                val sourceName = sequenceOf("name", "title", "original_name", "original_title")
+                    .map { m.optString(it).trim() }.firstOrNull { it.isNotBlank() }.orEmpty()
+                if (mid.isBlank() || sourceName.isBlank()) continue
+                val tmdbBatchPosition = (j - tmdbBatchStart + metas.length()) % maxOf(1, metas.length())
+                val sourcePoster = firstHttp(m.optString("poster"), m.optString("poster_url"), m.optString("posterUrl"))
+                val sourceBackground = firstHttp(m.optString("background"), m.optString("backdrop"), m.optString("backdropUrl"), sourcePoster)
+                val sourceLogo = firstHttp(m.optString("logo"), m.optString("logo_url"), m.optString("logoUrl"))
+                val enriched = enrichFromTmdb(m, mt, allowFetch = tmdbBatchPosition < tmdbBatchSize) { updated ->
+                    // TMDB responds asynchronously; republish this exact item with its fresh metadata,
+                    // rather than waiting for a future catalog rotation to refresh the launcher artwork.
+                    val updatedItem = JSONObject().put("id", mid).put("type", mt).put("name", sourceName)
+                        .put("poster", firstHttp(updated.optString("poster"), sourcePoster))
+                        .put("background", firstHttp(updated.optString("background"), sourceBackground, sourcePoster))
+                        .put("platformLogo", logo)
+                        .put("titleLogo", firstHttp(updated.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
+                        .put("rating", ratingAndYear(updated, mt, m))
+                    handler.post {
+                        // An enrichment response can arrive after rotation removed this title.
+                        // Update existing rows only; never re-add an item from an old catalog visit.
+                        if (relayId(updatedItem) in existingIds()) publish(updatedItem)
+                    }
+                }
                 all.putIfAbsent("$mt:$mid", JSONObject().put("id", mid).put("type", mt)
-                    .put("name", m.optString("name")).put("poster", m.optString("poster"))
-                    .put("background", m.optString("background")).put("platformLogo", logo)
-                    .put("titleLogo", highestResolutionImage(m.optString("logo")) ?: m.optString("logo"))
-                    .put("rating", ratingAndYear(m, mt)))
+                    .put("name", sourceName).put("poster", firstHttp(enriched.optString("poster"), sourcePoster))
+                    .put("background", firstHttp(enriched.optString("background"), sourceBackground, sourcePoster))
+                    .put("platformLogo", logo)
+                    .put("titleLogo", firstHttp(enriched.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
+                    .put("rating", ratingAndYear(enriched, mt, m)))
             }
             val firstNative = readNativeContinueWatching().firstOrNull()
             val wanted = all.values.filterNot {
@@ -126,7 +164,7 @@ class RelaySyncService : Service() {
             if (artworkWarmupRunning.compareAndSet(false, true)) {
                 artworkExecutor.execute {
                     try {
-                        wanted.forEach { item ->
+                        wanted.take(8).forEach { item ->
                             runCatching {
                                 val background = highestResolutionImage(item.optString("background"))
                                     ?: highestResolutionImage(item.optString("poster"))
@@ -148,7 +186,9 @@ class RelaySyncService : Service() {
             existingIds().filter { it !in wantedIds }.forEach { deleteRelay(it) }
             wanted.forEachIndexed { index, item -> publish(item, topOfCatalog = index == 0) }
             firstNative?.let { publish(it, pinnedFirst = true) }
-        } finally { busy = false }
+        } catch (e: Exception) {
+            android.util.Log.w("NuvioRelay", "Background catalog sync failed (${e.javaClass.simpleName})", e)
+        }
     }
     private fun publish(m: JSONObject, pinnedFirst: Boolean = false, topOfCatalog: Boolean = false) {
         val type = m.optString("type"); val id = m.optString("id")
@@ -185,7 +225,9 @@ class RelaySyncService : Service() {
                 contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(existing), null, null)
                 contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values)
             }
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            android.util.Log.w("NuvioRelay", "Watch Next publish failed (${e.javaClass.simpleName})")
+        }
     }
     private fun readNativeContinueWatching(): List<JSONObject> {
         val out = mutableListOf<JSONObject>()
@@ -235,19 +277,214 @@ class RelaySyncService : Service() {
             match.groupValues[1] + "original" + match.groupValues[3]
         }
     }
-    private fun ratingAndYear(m: JSONObject, type: String): String {
+    private fun firstHttp(vararg values: String?): String = values.firstOrNull { !it.isNullOrBlank() && it.startsWith("http") }.orEmpty()
+
+    /** Merges only validated TMDB fields over source metadata; source fields remain the fallback. */
+    private fun mergeTmdb(source: JSONObject, enrichment: JSONObject): JSONObject {
+        val merged = JSONObject(source.toString())
+        for (field in arrayOf("poster", "background", "titleLogo")) {
+            val value = enrichment.optString(field)
+            if (value.startsWith("https://") && value.length > 12) merged.put(field, value)
+        }
+        for (field in arrayOf("vote_average", "year", "overview", "runtime", "number_of_seasons", "genres")) {
+            if (enrichment.has(field) && !enrichment.isNull(field)) merged.put(field, enrichment.get(field))
+        }
+        return merged
+    }
+
+    private fun normalizedTitle(value: String): String =
+        value.lowercase(java.util.Locale.ROOT)
+            .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
+            .replace(Regex("[^\\p{L}\\p{N}]"), " ")
+            .replace(Regex("\\s+"), " ").trim()
+
+    private fun sourceYear(source: JSONObject): String =
+        sequenceOf("year", "releaseInfo", "released", "release_date", "first_air_date")
+            .map { source.optString(it) }
+            .firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
+            ?.let { Regex("(19|20)\\d{2}").find(it)?.value }.orEmpty()
+
+    /** Cache reads are merged with source metadata. Network fetches are serialized and bounded. */
+    private fun enrichFromTmdb(source: JSONObject, type: String, allowFetch: Boolean, onEnriched: (JSONObject) -> Unit = {}): JSONObject {
+        val token = getSharedPreferences("relay", MODE_PRIVATE).getString("tmdb_read_token", "").orEmpty().trim()
+        if (token.isBlank()) return source
+        val title = sequenceOf("name", "title", "original_name", "original_title")
+            .map { source.optString(it).trim() }.firstOrNull { it.isNotBlank() }.orEmpty()
+        if (title.isBlank()) return source
+
+        val isTv = type.equals("series", true) || type.equals("tv", true) || type.equals("show", true)
+        val endpoint = if (isTv) "tv" else "movie"
+        val year = sourceYear(source)
+        val imdbId = sequenceOf("imdb_id", "imdbId", "imdbid", "id")
+            .map { source.optString(it).trim() }.firstOrNull { it.matches(Regex("tt\\d{7,10}")) }.orEmpty()
+        val explicitTmdbId = sequenceOf("tmdb_id", "tmdbId", "tmdbid", "tmdb")
+            .map { source.optString(it).trim().removePrefix("tmdb:").removePrefix("tmdb_") }
+            .firstOrNull { it.matches(Regex("\\d{1,10}")) && (it.toIntOrNull() ?: 0) > 0 }.orEmpty()
+        val cacheDir = File(cacheDir, "tmdb-cache").apply { mkdirs() }
+        val keyInput = "${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
+        val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
+        val file = File(cacheDir, "$key.json")
+        if (file.exists()) {
+            val age = System.currentTimeMillis() - file.lastModified()
+            // Negative matches expire quickly: title-only matching can miss alternate/original titles,
+            // and a stale miss must not suppress enrichment for days after the matching logic improves.
+            val cachedTtl = if (runCatching { JSONObject(file.readText()).optBoolean("_no_match") }.getOrDefault(false))
+                6L * 60 * 60 * 1000 else 30L * 24 * 60 * 60 * 1000
+            if (age in 0..cachedTtl) {
+                try {
+                    val cached = JSONObject(file.readText())
+                    if (cached.optBoolean("_no_match")) return source
+                    return mergeTmdb(source, cached)
+                } catch (_: Exception) { }
+            }
+        }
+        if (!allowFetch || !tmdbInFlight.add(key)) return source
+
+        tmdbExecutor.execute {
+            try {
+                var match: JSONObject? = null
+                var details: JSONObject? = null
+
+                // Prefer exact TMDB IDs, then exact IMDb IDs. Never trust a title-only top result.
+                if (explicitTmdbId.isNotBlank()) {
+                    details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$explicitTmdbId?append_to_response=images&include_image_language=en,null", token)
+                    match = details
+                } else if (imdbId.isNotBlank()) {
+                    val found = tmdbGet("https://api.themoviedb.org/3/find/$imdbId?external_source=imdb_id", token)
+                    val results = found.optJSONArray(if (isTv) "tv_results" else "movie_results")
+                    match = results?.optJSONObject(0)
+                    val exactId = match?.optInt("id", 0) ?: 0
+                    if (exactId > 0) details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$exactId?append_to_response=images&include_image_language=en,null", token)
+                } else {
+                    val query = URLEncoder.encode(title, "UTF-8")
+                    val yearParam = if (year.isNotBlank()) (if (isTv) "&first_air_date_year=$year" else "&year=$year") else ""
+                    val search = tmdbGet("https://api.themoviedb.org/3/search/$endpoint?query=$query$yearParam&include_adult=false", token)
+                    val results = search.optJSONArray("results")
+                    if (results != null) {
+                        val sourceTitle = normalizedTitle(title)
+                        for (i in 0 until results.length()) {
+                            val candidate = results.optJSONObject(i) ?: continue
+                            val candidateTitles = sequenceOf("name", "title", "original_name", "original_title")
+                                .map { candidate.optString(it).trim() }.filter { it.isNotBlank() }
+                                .map { normalizedTitle(it) }.toSet()
+                            val sourceTitles = sequenceOf("name", "title", "original_name", "original_title")
+                                .map { source.optString(it).trim() }.filter { it.isNotBlank() }
+                                .map { normalizedTitle(it) }.toSet() + sourceTitle
+                            if (candidateTitles.intersect(sourceTitles).isEmpty()) continue
+                            val date = sequenceOf("release_date", "first_air_date")
+                                .map { candidate.optString(it) }.firstOrNull { it.length >= 4 }.orEmpty()
+                            if (year.isNotBlank() && (date.length < 4 || date.take(4) != year)) continue
+                            match = candidate
+                            break
+                        }
+                    }
+                    val matchedId = match?.optInt("id", 0) ?: 0
+                    if (matchedId > 0) details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$matchedId?append_to_response=images&include_image_language=en,null", token)
+                }
+
+                val chosen = details ?: match
+                val sourceTitleSet = sequenceOf("name", "title", "original_name", "original_title")
+                    .map { source.optString(it).trim() }.filter { it.isNotBlank() }
+                    .map { normalizedTitle(it) }.toSet() + normalizedTitle(title)
+                val chosenTitleSet = chosen?.let { item ->
+                    sequenceOf("name", "title", "original_name", "original_title")
+                        .map { item.optString(it).trim() }.filter { it.isNotBlank() }
+                        .map { normalizedTitle(it) }.toSet()
+                }.orEmpty()
+                val titleMismatch = explicitTmdbId.isBlank() && imdbId.isBlank() &&
+                    sourceTitleSet.intersect(chosenTitleSet).isEmpty()
+                if (chosen == null || titleMismatch) {
+                    file.writeText(JSONObject().put("_no_match", true).toString())
+                    return@execute
+                }
+                val result = JSONObject()
+                val posterPath = chosen.optString("poster_path").takeIf { it.startsWith("/") }
+                    ?: match?.optString("poster_path")?.takeIf { it.startsWith("/") }
+                val backdropPath = chosen.optString("backdrop_path").takeIf { it.startsWith("/") }
+                    ?: match?.optString("backdrop_path")?.takeIf { it.startsWith("/") }
+                if (posterPath != null) result.put("poster", "https://image.tmdb.org/t/p/original$posterPath")
+                if (backdropPath != null) result.put("background", "https://image.tmdb.org/t/p/original$backdropPath")
+                val logos = chosen.optJSONObject("images")?.optJSONArray("logos")
+                if (logos != null) {
+                    var selectedPath: String? = null
+                    var selectedRank = Int.MAX_VALUE
+                    for (i in 0 until logos.length()) {
+                        val candidate = logos.optJSONObject(i) ?: continue
+                        val path = candidate.optString("file_path")
+                        if (!path.startsWith("/")) continue
+                        val lang = candidate.optString("iso_639_1")
+                        val languageRank = when (lang) { "en" -> 0; "null", "" -> 1; else -> 2 }
+                        // Prefer English, then language-neutral logos; within a language prefer
+                        // the largest uploaded asset instead of whichever row TMDB returns first.
+                        val width = candidate.optInt("width", 0).coerceIn(0, 999_999)
+                        val rank = languageRank * 1_000_000 - width
+                        if (rank < selectedRank) { selectedPath = path; selectedRank = rank }
+                    }
+                    selectedPath?.let { result.put("titleLogo", "https://image.tmdb.org/t/p/original$it") }
+                }
+                val score = chosen.optDouble("vote_average", -1.0)
+                if (score in 0.0..10.0) result.put("vote_average", score)
+                val date = if (isTv) chosen.optString("first_air_date") else chosen.optString("release_date")
+                if (date.matches(Regex("(19|20)\\d{2}.*"))) result.put("year", date.take(4))
+                val genres = chosen.optJSONArray("genres")
+                if (genres != null) {
+                    val names = org.json.JSONArray()
+                    for (i in 0 until minOf(2, genres.length())) {
+                        val name = genres.optJSONObject(i)?.optString("name").orEmpty()
+                        if (name.isNotBlank()) names.put(name)
+                    }
+                    result.put("genres", names)
+                }
+                if (chosen.optString("overview").isNotBlank()) result.put("overview", chosen.optString("overview"))
+                if (chosen.optInt("runtime", 0) > 0) result.put("runtime", chosen.optInt("runtime"))
+                if (chosen.optInt("number_of_seasons", 0) > 0) result.put("number_of_seasons", chosen.optInt("number_of_seasons"))
+                if (result.length() == 0) result.put("_no_match", true)
+                file.writeText(result.toString())
+                if (!result.optBoolean("_no_match")) {
+                    val merged = mergeTmdb(source, result)
+                    handler.post { runCatching { onEnriched(merged) } }
+                }
+            } catch (e: Exception) {
+                // Never log the token or full request URL. Source metadata remains the fallback.
+                android.util.Log.w("NuvioRelay", "TMDB enrichment failed for ${title.take(80)} (${e.javaClass.simpleName})")
+            } finally {
+                tmdbInFlight.remove(key)
+            }
+        }
+        return source
+    }
+
+    private fun tmdbGet(url: String, token: String): JSONObject {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 5000; conn.readTimeout = 7000
+        conn.setRequestProperty("Accept", "application/json")
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        try {
+            if (conn.responseCode !in 200..299) throw IllegalStateException("TMDB HTTP ${conn.responseCode}")
+            return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        } finally { conn.disconnect() }
+    }
+
+    private fun ratingAndYear(m: JSONObject, type: String, fallback: JSONObject = JSONObject()): String {
         val score = sequenceOf(m.optString("imdbRating"), m.optString("rating"))
             .map { it.trim() }
             .firstOrNull { it.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (it.toDoubleOrNull()?.let { n -> n in 0.0..10.0 } == true) }
             ?: m.optDouble("vote_average", -1.0).takeIf { it in 0.0..10.0 }
                 ?.let { String.format(java.util.Locale.US, "%.1f", it) }
-        val yearSource = sequenceOf(m.optString("year"), m.optString("releaseInfo"), m.optString("released"))
-            .firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
+            ?: fallback.optDouble("vote_average", -1.0).takeIf { it in 0.0..10.0 }
+                ?.let { String.format(java.util.Locale.US, "%.1f", it) }
+        val yearSource = sequenceOf(
+            m.optString("year"), m.optString("releaseInfo"), m.optString("released"),
+            m.optString("release_date"), m.optString("first_air_date"),
+            fallback.optString("year"), fallback.optString("releaseInfo"), fallback.optString("released"),
+            fallback.optString("release_date"), fallback.optString("first_air_date")
+        ).firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
         val year = yearSource?.let { Regex("(19|20)\\d{2}").find(it)?.value }
         val genres = m.optJSONArray("genres")
         val genreNames = mutableListOf<String>()
         if (genres != null) for (i in 0 until minOf(genres.length(), 2)) {
-            val g = genres.optString(i).trim()
+            val rawGenre = genres.opt(i)
+            val g = (if (rawGenre is JSONObject) rawGenre.optString("name") else rawGenre.toString()).trim()
             if (g.isNotBlank() && g !in genreNames) genreNames.add(g)
         }
         val details = mutableListOf<String>()
@@ -275,5 +512,10 @@ class RelaySyncService : Service() {
     private fun deleteRelay(key: String) { findId(key)?.let { try { contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(it), null, null) } catch (_: Exception) {} } }
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onDestroy() { handler.removeCallbacks(tick); super.onDestroy() }
+    override fun onDestroy() {
+        handler.removeCallbacks(tick)
+        artworkExecutor.shutdownNow()
+        tmdbExecutor.shutdownNow()
+        super.onDestroy()
+    }
 }

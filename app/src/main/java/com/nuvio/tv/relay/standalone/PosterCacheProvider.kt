@@ -9,8 +9,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.LinearGradient
-import android.graphics.Shader
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
@@ -55,8 +53,9 @@ class PosterCacheProvider : ContentProvider() {
         val bgUrl = uri.getQueryParameter("background") ?: throw java.io.FileNotFoundException("Hero background missing")
         val logoUrl = uri.getQueryParameter("logo")
         val rating = uri.getQueryParameter("rating").orEmpty().trim()
-        val bg = decodeUrl(bgUrl) ?: throw java.io.FileNotFoundException("Hero background could not be decoded")
-        // Match the downloaded asset's decoded dimensions; do not upscale a thumbnail.
+        val bg = decodeUrl(bgUrl, maxWidth = 1920, maxHeight = 1080) ?: throw java.io.FileNotFoundException("Hero background could not be decoded")
+        // Decode to a TV-appropriate working size. TMDB's original asset can be 4K+;
+        // decoding it full-size and allocating a second ARGB bitmap needlessly spikes RAM.
         val w = bg.width
         val h = bg.height
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -66,7 +65,7 @@ class PosterCacheProvider : ContentProvider() {
         canvas.drawBitmap(bg, null, Rect(0, 0, w, h), paint)
 
         if (!logoUrl.isNullOrBlank()) {
-            val logo = decodeUrl(logoUrl)
+            val logo = decodeUrl(logoUrl, maxWidth = 1200, maxHeight = 400)
             if (logo != null) {
                 // Fixed normalized logo box: every hero uses identical placement and bounds.
                 val left = w * .045f
@@ -134,12 +133,35 @@ class PosterCacheProvider : ContentProvider() {
         bg.recycle(); out.recycle()
     }
 
-    private fun decodeUrl(source: String): Bitmap? {
+    private fun decodeUrl(source: String, maxWidth: Int, maxHeight: Int): Bitmap? {
         val c = URL(source).openConnection() as HttpURLConnection
         c.connectTimeout = 7000; c.readTimeout = 10000
         c.setRequestProperty("User-Agent", "NuvioTVRelay/0.1")
-        return try { if (c.responseCode !in 200..299) null else c.inputStream.use { BitmapFactory.decodeStream(it) } }
-        finally { c.disconnect() }
+        return try {
+            if (c.responseCode !in 200..299) return null
+            val bytes = c.inputStream.use { input ->
+                val declared = c.contentLengthLong
+                if (declared > MAX_IMAGE_BYTES) throw java.io.IOException("Image response exceeds size limit")
+                val output = java.io.ByteArrayOutputStream(minOf(declared.coerceAtLeast(8192L), MAX_IMAGE_BYTES.toLong()).toInt())
+                val buffer = ByteArray(16 * 1024)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_IMAGE_BYTES) throw java.io.IOException("Image response exceeds size limit")
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= maxWidth || bounds.outHeight / (sample * 2) >= maxHeight) sample *= 2
+            val options = BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        } finally { c.disconnect() }
     }
 
     private fun download(source: String, target: File) {
@@ -148,7 +170,19 @@ class PosterCacheProvider : ContentProvider() {
         c.setRequestProperty("User-Agent", "NuvioTVRelay/0.1")
         try {
             if (c.responseCode !in 200..299) throw java.io.FileNotFoundException("Poster HTTP ${c.responseCode}")
-            c.inputStream.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } }
+            val declared = c.contentLengthLong
+            if (declared > MAX_IMAGE_BYTES) throw java.io.IOException("Poster response exceeds size limit")
+            c.inputStream.use { input -> FileOutputStream(target).use { output ->
+                val buffer = ByteArray(16 * 1024)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_IMAGE_BYTES) throw java.io.IOException("Poster response exceeds size limit")
+                    output.write(buffer, 0, read)
+                }
+            } }
             if (target.length() == 0L) { target.delete(); throw java.io.FileNotFoundException("Empty poster") }
         } finally { c.disconnect() }
     }
@@ -157,13 +191,15 @@ class PosterCacheProvider : ContentProvider() {
         val files = dir.listFiles()?.filter { it.isFile && it.extension == "img" }?.sortedBy { it.lastModified() } ?: return
         var total = files.sumOf { it.length() }
         for (f in files) {
-            if (total <= 4L * 1024 * 1024 * 1024) break
+            if (total <= 1024L * 1024 * 1024) break
             if (f.nameWithoutExtension == keep) continue
             val size = f.length(); if (f.delete()) total -= size
         }
     }
 
     companion object {
+        private const val MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
         fun uriFor(context: android.content.Context, raw: String?): Uri? {
             if (raw.isNullOrBlank() || !raw.startsWith("http")) return null
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/poster/${sha256(raw)}")
@@ -173,7 +209,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v15-tight-metadata-lowered|$background|${logo.orEmpty()}|${rating.orEmpty()}"
+            val descriptor = "hero-v16-current-apple-tv-metadata-lock|$background|${logo.orEmpty()}|${rating.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

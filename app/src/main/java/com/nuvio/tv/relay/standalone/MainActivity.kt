@@ -29,12 +29,21 @@ class MainActivity : Activity() {
     private lateinit var catalogPanel: LinearLayout
     private lateinit var pageScroll: ScrollView
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var rotationOn = false
+    private var rotationOn = true
     private var rotationSeconds = 15
     private var rotationIndex = 0
     private val sectionViews = linkedMapOf<String, View>()
     private lateinit var status: TextView
     private lateinit var list: LinearLayout
+    private var manualSyncButton: TextView? = null
+    private var refreshAddonsButton: TextView? = null
+    private var rotationButton: TextView? = null
+    private var manualSyncState: TextView? = null
+    private var refreshAddonsState: TextView? = null
+    private var rotationState: TextView? = null
+    private val focusChain = mutableListOf<View>()
+    private var manualSyncRunning = false
+    private var refreshingAddons = false
     private val catalogs = mutableListOf<Catalog>()
     private val selected = mutableSetOf<String>()
     private val addons = linkedSetOf<String>()
@@ -46,7 +55,6 @@ class MainActivity : Activity() {
         val key: String get() = addon + "|" + type + "|" + id
     }
     data class Item(val id: String, val type: String, val name: String, val poster: String?, val background: String?, val platformLogo: String?, val titleLogo: String? = null, val rating: String = "")
-    private val nativeContinueKey = "nuvio_native_continue_watching"
     private val pinnedNativeInternalId = "nuvio_relay_pinned_native_first"
     private fun nativeContinueCatalog() = Catalog("nuvio-native://continue-watching", "Nuvio Re-Shaped", "native", "continue-watching", "Nuvio Re-Shaped Continue Watching", null)
     private fun withNativeContinue(items: List<Catalog>): List<Catalog> = (items.filterNot { it.key == nativeContinueCatalog().key } + nativeContinueCatalog())
@@ -56,7 +64,13 @@ class MainActivity : Activity() {
         selected.addAll(prefs.getStringSet("selected", emptySet()) ?: emptySet())
         if (prefs.getStringSet("selected", emptySet()).isNullOrEmpty()) selected.add(nativeContinueCatalog().key)
         addons.addAll(prefs.getStringSet("addons", emptySet()) ?: emptySet())
-        pageScroll = ScrollView(this)
+        pageScroll = ScrollView(this).apply {
+            isFillViewport = true
+            isSmoothScrollingEnabled = true
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            clipToPadding = false
+            setPadding(0, dp(8), 0, dp(20))
+        }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(36, 30, 36, 36)
@@ -81,13 +95,142 @@ class MainActivity : Activity() {
         }
         root.addView(controls, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) })
         controls.addView(label("CONNECT", 13, Color.rgb(94, 190, 255), true))
-        button("Connect", action = { connectToNuvio() })
+        val connectButton = button("Connect", action = { connectToNuvio() }).apply { id = View.generateViewId() }
         controls.addView(label("ADD-ON SETUP GUIDE", 14, Color.WHITE, true))
         controls.addView(label("1. Open Nuvio Re-Shaped on this TV.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("2. Go to Add-ons → Manage from phone (QR).", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("3. Keep the QR / phone-management screen open.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("4. Return here and select Connect.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("5. Catalogs will load and sync automatically.", 13, Color.rgb(205, 216, 232)))
+        controls.addView(label("MANUAL CONTROLS", 13, Color.rgb(94, 190, 255), true))
+        controls.addView(label("These buttons are manual confirmations. Existing automatic sync and rotation behavior remains enabled.", 13, Color.rgb(153, 170, 192)))
+        manualSyncState = label("Status: Ready", 12, Color.rgb(153, 170, 192))
+        manualSyncButton = button("Sync Now", action = { runManualSync() })
+        controls.addView(manualSyncState)
+        refreshAddonsState = label("Status: Waiting for refresh", 12, Color.rgb(153, 170, 192))
+        refreshAddonsButton = button("Refresh Add-ons", action = { refreshAddonsManually() })
+        controls.addView(refreshAddonsState)
+        rotationOn = prefs.getBoolean("rotation_enabled", true)
+        rotationState = label("Status: " + if (rotationOn) "ENABLED" else "DISABLED", 12,
+            if (rotationOn) Color.rgb(105, 211, 176) else Color.rgb(153, 170, 192))
+        rotationButton = button(rotationCaption(), action = { toggleRotation(); updateRotationControl("Rotation " + if (rotationOn) "enabled" else "disabled") })
+        controls.addView(rotationState)
+        controls.addView(label("TMDB ENRICHMENT", 13, Color.rgb(94, 190, 255), true))
+        controls.addView(label("Add a TMDB API Read Access Token to enrich missing posters, backdrops, logos, ratings and release years. The token is stored locally on this device.", 13, Color.rgb(153, 170, 192)))
+        val tmdbTokenInput = EditText(this).apply {
+            id = View.generateViewId()
+            hint = "TMDB API Read Access Token"
+            setHintTextColor(Color.rgb(150, 166, 188))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setRawInputType(android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            setSingleLine(true)
+            minHeight = dp(58)
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isClickable = true
+            showSoftInputOnFocus = true
+            setSelectAllOnFocus(false)
+            setText(prefs.getString("tmdb_read_token", ""))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = rounded(Color.rgb(25, 34, 50), 10)
+            setOnFocusChangeListener { view, focused ->
+                view.background = rounded(if (focused) Color.rgb(35, 65, 91) else Color.rgb(25, 34, 50), 10)
+            }
+            setOnClickListener {
+                requestFocus()
+                post {
+                    val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    postDelayed({
+                        requestFocus()
+                        imm.showSoftInput(this, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+                    }, 200)
+                }
+            }
+        }
+        controls.addView(tmdbTokenInput, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10); bottomMargin = dp(8) })
+        tmdbTokenInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.hideSoftInputFromWindow(tmdbTokenInput.windowToken, 0)
+                true
+            } else false
+        }
+        val savedTmdbToken = prefs.getString("tmdb_read_token", "").orEmpty()
+        val tmdbStatus = label(
+            if (savedTmdbToken.isBlank()) "TMDB API token not added yet."
+            else "TMDB API token saved; validity has not been checked in this session.",
+            13,
+            if (savedTmdbToken.isBlank()) Color.rgb(153, 170, 192) else Color.rgb(240, 180, 110)
+        )
+        val saveTmdbButton = button("Verify & Save TMDB Token", action = {
+            val token = tmdbTokenInput.text?.toString()?.trim().orEmpty()
+            if (token.isBlank()) {
+                prefs.edit().remove("tmdb_read_token").apply()
+                tmdbStatus.text = "TMDB token removed. Enrichment is disabled."
+                tmdbStatus.setTextColor(Color.rgb(240, 180, 110))
+                message("TMDB token removed. Enrichment is disabled.")
+            } else {
+                tmdbStatus.text = "Checking token with TMDB…"
+                tmdbStatus.setTextColor(Color.rgb(240, 200, 110))
+                tmdbTokenInput.isEnabled = false
+                Toast.makeText(this, "Checking TMDB token…", Toast.LENGTH_SHORT).show()
+                worker.execute {
+                    var valid = false
+                    var httpCode = -1
+                    var errorMessage: String? = null
+                    var connection: HttpURLConnection? = null
+                    try {
+                        connection = (URL("https://api.themoviedb.org/3/authentication").openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 7000
+                            readTimeout = 7000
+                            requestMethod = "GET"
+                            setRequestProperty("Accept", "application/json")
+                            setRequestProperty("Authorization", "Bearer $token")
+                        }
+                        httpCode = connection.responseCode
+                        if (httpCode in 200..299) {
+                            val body = connection.inputStream.bufferedReader().use { it.readText() }
+                            val json = JSONObject(body)
+                            valid = json.optInt("status_code", -1) == 1 || json.optBoolean("success", false)
+                            if (!valid) errorMessage = "TMDB did not confirm this token."
+                        } else {
+                            errorMessage = when (httpCode) {
+                                401, 403 -> "TMDB rejected this token. It is invalid or revoked."
+                                else -> "TMDB returned HTTP $httpCode. Token validity could not be confirmed."
+                            }
+                        }
+                    } catch (_: Exception) {
+                        errorMessage = "Could not reach TMDB. Check the internet connection and try again."
+                    } finally {
+                        connection?.disconnect()
+                    }
+                    runOnUiThread {
+                        tmdbTokenInput.isEnabled = true
+                        if (valid) {
+                            prefs.edit().putString("tmdb_read_token", token).apply()
+                            tmdbStatus.text = "VALID: TMDB accepted the token. It has been saved on this device."
+                            tmdbStatus.setTextColor(Color.rgb(105, 211, 176))
+                            Toast.makeText(this, "TMDB token is valid and saved", Toast.LENGTH_LONG).show()
+                        } else {
+                            tmdbStatus.text = errorMessage ?: "Could not verify token."
+                            tmdbStatus.setTextColor(Color.rgb(255, 130, 120))
+                            Toast.makeText(this, if (httpCode == 401 || httpCode == 403) "TMDB token is invalid" else "TMDB token verification failed", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }).apply { id = View.generateViewId() }
+        controls.addView(tmdbStatus)
+        // Main actions first; render() appends the live catalog checkboxes so D-pad
+        // can continue into the catalog library instead of getting trapped at Save.
+        focusChain.clear()
+        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, tmdbTokenInput, saveTmdbButton))
+        configureFocusChain()
+        connectButton.nextFocusDownId = manualSyncButton?.id ?: connectButton.id
         catalogPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(18))
@@ -104,24 +247,17 @@ class MainActivity : Activity() {
         }
         root.addView(status, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
         root.addView(label("Nuvio Re-Shaped is not modified by this app.", 12, Color.rgb(130, 145, 164)))
+        // Start at the top of the action chain. Focusing the token field on launch
+        // trapped DOWN navigation below the manual controls on TV remotes.
+        connectButton.post {
+            pageScroll.scrollTo(0, 0)
+            connectButton.requestFocus()
+        }
         refresh()
         if (prefs.getBoolean("auto_sync", true)) {
             val service = Intent(this, RelaySyncService::class.java)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
         }
-    }
-
-    private val autoSyncTask = object : Runnable {
-        override fun run() {
-            if (!prefs.getBoolean("auto_sync", true)) return
-            sync()
-            mainHandler.postDelayed(this, 6 * 60 * 60 * 1000L)
-        }
-    }
-
-    private fun scheduleAutoSync() {
-        mainHandler.removeCallbacks(autoSyncTask)
-        mainHandler.postDelayed(autoSyncTask, 6 * 60 * 60 * 1000L)
     }
 
     private fun connectToNuvio() {
@@ -182,11 +318,11 @@ class MainActivity : Activity() {
                     val syncService = Intent(this@MainActivity, RelaySyncService::class.java)
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(syncService) else startService(syncService)
                     if (selected.isNotEmpty()) {
-                        mainHandler.post { sync() }
-                        rotationOn = true
+                        // The background service now owns automatic publishing. Do not launch
+                        // a second catalog fetch/publish pass from the Activity on Connect.
+                        rotationOn = prefs.getBoolean("rotation_enabled", true)
                         rotationIndex = 0
-                        mainHandler.removeCallbacks(rotationTask)
-                        mainHandler.postDelayed(rotationTask, rotationSeconds * 1000L)
+                        updateRotationControl("Rotation " + if (rotationOn) "enabled" else "disabled")
                     }
                 }
             } catch (e: Exception) {
@@ -198,13 +334,18 @@ class MainActivity : Activity() {
     private fun refresh() {
         if (addons.isEmpty()) { render(); message("Connect to Nuvio Re-Shaped or add a manifest URL."); return }
         worker.execute {
-            val loaded = mutableListOf<Catalog>()
-            addons.toList().forEach { url ->
-                try {
-                    val m = json(url)
-                    loaded.addAll(parseCatalogs(url, m.optString("name", Uri.parse(url).host ?: "Add-on"), m))
-                } catch (_: Exception) { }
-            }
+            val urls = addons.toList()
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+            val loaded = java.util.Collections.synchronizedList(mutableListOf<Catalog>())
+            try {
+                val tasks = urls.map { url -> pool.submit {
+                    try {
+                        val m = json(url)
+                        loaded.addAll(parseCatalogs(url, m.optString("name", Uri.parse(url).host ?: "Add-on"), m))
+                    } catch (_: Exception) { }
+                } }
+                tasks.forEach { runCatching { it.get() } }
+            } finally { pool.shutdownNow() }
             runOnUiThread {
                 catalogs.clear(); catalogs.addAll(withNativeContinue(loaded)); previews.clear(); expanded.clear(); render()
                 message("Loaded " + loaded.size + " catalogs.")
@@ -227,7 +368,12 @@ class MainActivity : Activity() {
         if (!::list.isInitialized) return
         list.removeAllViews()
         sectionViews.clear()
-        if (catalogs.isEmpty()) { list.addView(label("No catalogs loaded yet.", 15, Color.LTGRAY)); return }
+        if (catalogs.isEmpty()) {
+            list.addView(label("No catalogs loaded yet.", 15, Color.LTGRAY))
+            configureFocusChain()
+            return
+        }
+        val catalogFocusViews = mutableListOf<View>()
         catalogs.distinctBy { it.key }.forEach { c ->
             val section = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -253,6 +399,7 @@ class MainActivity : Activity() {
                     prefs.edit().putStringSet("selected", selected.toSet()).apply()
                 }
             }
+            catalogFocusViews.add(cb)
             heading.addView(cb, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val typeBadge = TextView(this).apply {
                 text = c.type.uppercase()
@@ -270,118 +417,130 @@ class MainActivity : Activity() {
                 bottomMargin = (12 * resources.displayMetrics.density).toInt()
             })
         }
+        focusChain.removeAll { it is CheckBox }
+        focusChain.addAll(catalogFocusViews)
+        configureFocusChain()
     }
 
-    private fun loadCatalog(c: Catalog) {
-        if (c.key in previews) { expanded.add(c.key); render(); return }
-        message("Loading titles from ${c.name}…")
-        worker.execute {
-            try {
-                val base = c.addon.removeSuffix("/manifest.json").trimEnd('/')
-                val url = base + "/catalog/" + enc(c.type) + "/" + enc(c.id) + ".json?skip=0&limit=24"
-                val arr = json(url).optJSONArray("metas") ?: JSONArray()
-                val result = mutableListOf<Item>()
-                for (i in 0 until arr.length()) {
-                    val m = arr.optJSONObject(i) ?: continue
-                    val id = m.optString("id"); val name = m.optString("name")
-                    if (id.isBlank() || name.isBlank()) continue
-                    result.add(Item(id, m.optString("type", c.type).ifBlank { c.type }, name,
-                        m.optString("poster").takeIf { it.startsWith("http") },
-                        m.optString("background").takeIf { it.startsWith("http") }, c.platformLogo))
+    private fun configureFocusChain() {
+        val chain = focusChain.toList()
+        chain.forEachIndexed { index, view ->
+            view.isFocusable = true
+            view.isFocusableInTouchMode = true
+            view.nextFocusDownId = chain.getOrNull(index + 1)?.id ?: view.id
+            view.nextFocusUpId = chain.getOrNull(index - 1)?.id ?: view.id
+            view.nextFocusForwardId = chain.getOrNull(index + 1)?.id ?: view.id
+            // Keep the button helper's existing focus listener: it paints the visible
+            // blue focus state. Only catalog checkboxes need custom scroll-into-view.
+            if (view is CheckBox) view.setOnFocusChangeListener { focusedView, hasFocus ->
+                if (hasFocus) focusedView.postDelayed({
+                    if (!focusedView.isFocused || !::pageScroll.isInitialized) return@postDelayed
+                    val rect = android.graphics.Rect(0, 0, focusedView.width, focusedView.height)
+                    pageScroll.offsetDescendantRectToMyCoords(focusedView, rect)
+                    val viewportTop = pageScroll.scrollY + pageScroll.paddingTop + dp(10)
+                    val viewportBottom = pageScroll.scrollY + pageScroll.height - pageScroll.paddingBottom - dp(10)
+                    when {
+                        rect.top < viewportTop -> pageScroll.smoothScrollTo(0, (rect.top - pageScroll.paddingTop - dp(10)).coerceAtLeast(0))
+                        rect.bottom > viewportBottom -> pageScroll.smoothScrollTo(0, (rect.bottom - pageScroll.height + pageScroll.paddingBottom + dp(10)).coerceAtLeast(0))
+                    }
+                }, 70)
+            }
+            view.setOnKeyListener { _, keyCode, event ->
+                if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                when (keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> chain.getOrNull(index + 1)?.let { it.requestFocus(); true } ?: true
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> chain.getOrNull(index - 1)?.let { it.requestFocus(); true } ?: true
+                    else -> false
                 }
-                runOnUiThread { previews[c.key] = result; expanded.add(c.key); render(); message("Loaded ${result.size} titles from ${c.name}.") }
-            } catch (e: Exception) { runOnUiThread { message("Catalog load failed: ${e.message ?: "network error"}") } }
+            }
+        }
+    }
+
+    private fun rotationCaption(): String = if (rotationOn) "Rotation  ·  ENABLED (tap to stop)" else "Rotation  ·  DISABLED (tap to start)"
+
+    private fun updateRotationControl(note: String? = null) {
+        rotationButton?.text = rotationCaption()
+        rotationState?.text = "Status: " + (if (rotationOn) "ENABLED" else "DISABLED") + (note?.let { " · $it" } ?: "")
+        rotationState?.setTextColor(if (rotationOn) Color.rgb(105, 211, 176) else Color.rgb(153, 170, 192))
+    }
+
+    private fun runManualSync() {
+        if (manualSyncRunning) { message("Sync is already running."); return }
+        manualSyncRunning = true
+        manualSyncButton?.text = "Sync Now  ·  RUNNING…"
+        manualSyncState?.text = "Status: Sync in progress…"
+        manualSyncState?.setTextColor(Color.rgb(240, 200, 110))
+        val chosen = catalogs.filter { it.key in selected }.distinctBy { it.key }
+        if (chosen.isEmpty()) {
+            manualSyncRunning = false
+            manualSyncButton?.text = "Sync Now"
+            manualSyncState?.text = "Status: No selected catalogs"
+            manualSyncState?.setTextColor(Color.rgb(255, 130, 120))
+            message("No catalogs selected. Select catalogs before syncing.")
+            return
+        }
+        sync()
+        // sync() owns the worker; this guard is released after its status is reported.
+        mainHandler.postDelayed(object : Runnable {
+            override fun run() {
+                val labelText = manualSyncState?.text?.toString().orEmpty()
+                if (labelText.contains("SUCCESS") || labelText.contains("FAILED")) manualSyncRunning = false
+                else mainHandler.postDelayed(this, 500)
+            }
+        }, 500)
+    }
+
+    private fun refreshAddonsManually() {
+        if (refreshingAddons) { message("Add-on refresh is already running."); return }
+        if (addons.isEmpty()) { refreshAddonsState?.text = "Status: No add-ons connected"; message("Connect to Nuvio Re-Shaped first."); return }
+        refreshingAddons = true
+        refreshAddonsButton?.text = "Refresh Add-ons  ·  RUNNING…"
+        refreshAddonsState?.text = "Status: Fetching latest manifests…"
+        refreshAddonsState?.setTextColor(Color.rgb(240, 200, 110))
+        worker.execute {
+            val loaded = java.util.Collections.synchronizedList(mutableListOf<Catalog>())
+            val failed = java.util.Collections.synchronizedList(mutableListOf<String>())
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(4, addons.size.coerceAtLeast(1)))
+            val tasks = addons.toList().map { manifestUrl -> pool.submit {
+                try {
+                    val connection = (URL(manifestUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 6000; readTimeout = 8000
+                        setRequestProperty("Accept", "application/json")
+                    }
+                    val manifest = try {
+                        if (connection.responseCode !in 200..299) throw IllegalStateException("HTTP ${connection.responseCode}")
+                        JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                    } finally { connection.disconnect() }
+                    loaded.addAll(parseCatalogs(manifestUrl, manifest.optString("name", Uri.parse(manifestUrl).host ?: "Add-on"), manifest))
+                } catch (e: Exception) { failed.add((Uri.parse(manifestUrl).host ?: "Add-on") + ": " + (e.message ?: "network error")) }
+            } }
+            try { tasks.forEach { it.get() } } finally { pool.shutdownNow() }
+            val succeeded = addons.size - failed.size
+            runOnUiThread {
+                refreshingAddons = false
+                refreshAddonsButton?.text = if (failed.isEmpty()) "Refresh Add-ons  ·  DONE" else "Refresh Add-ons  ·  RETRY"
+                if (succeeded > 0) {
+                    val previousSelection = selected.toSet()
+                    catalogs.clear(); catalogs.addAll(withNativeContinue(loaded.distinctBy { it.key }))
+                    selected.clear(); selected.addAll(catalogs.map { it.key }.filter { it in previousSelection })
+                    if (selected.isEmpty() && catalogs.isNotEmpty()) selected.add(nativeContinueCatalog().key)
+                    prefs.edit().putStringSet("selected", selected.toSet()).putStringSet("addons", addons.toSet()).apply()
+                    previews.clear(); expanded.clear(); render()
+                }
+                val result = "Add-ons refreshed: $succeeded/${addons.size} manifests; ${loaded.distinctBy { it.key }.size} catalogs."
+                refreshAddonsState?.text = if (failed.isEmpty()) "Status: SUCCESS · $succeeded add-ons refreshed" else "Status: PARTIAL · " + failed.size + " failed"
+                refreshAddonsState?.setTextColor(if (failed.isEmpty()) Color.rgb(105, 211, 176) else Color.rgb(240, 200, 110))
+                message(result + if (failed.isEmpty()) "" else " Details: " + failed.joinToString("; "))
+            }
         }
     }
 
     private fun toggleRotation() {
         rotationOn = !rotationOn
-        mainHandler.removeCallbacks(rotationTask)
-        if (rotationOn) {
-            rotationIndex = 0
-            rotateToNextSection()
-            mainHandler.postDelayed(rotationTask, rotationSeconds * 1000L)
-            message("Section rotation running across checked catalogs.")
-        } else {
-            message("Section rotation stopped.")
-        }
-    }
-
-    private val rotationTask = object : Runnable {
-        override fun run() {
-            if (!rotationOn) return
-            rotateToNextSection()
-            mainHandler.postDelayed(this, rotationSeconds * 1000L)
-        }
-    }
-
-    private fun rotateToNextSection() {
-        val chosen = catalogs.distinctBy { it.key }.filter { it.key in selected }
-        if (chosen.isEmpty()) {
-            message("Choose the catalogs you want to rotate between using their checkboxes.")
-            rotationOn = false
-            return
-        }
-        val includeAll = prefs.getBoolean("rotate_all_catalogs", true)
-        val totalSteps = chosen.size + if (includeAll) 1 else 0
-        if (rotationIndex >= totalSteps) rotationIndex = 0
-        if (includeAll && rotationIndex == chosen.size) {
-            rotationIndex++
-            message("Rotation: Continue Watching — all selected catalogs")
-            sync()
-            return
-        }
-        val catalog = chosen[rotationIndex++]
-        message("Rotating Continue Watching to: " + catalog.name)
-        syncCatalogToContinueWatching(catalog)
-        sectionViews[catalog.key]?.let { section ->
-            pageScroll.post {
-                pageScroll.smoothScrollTo(0, (list.top + section.top).coerceAtLeast(0))
-                section.setBackground(rounded(Color.rgb(25, 44, 65), 10))
-                mainHandler.postDelayed({ section.setBackgroundColor(Color.TRANSPARENT) }, 700)
-            }
-        }
-    }
-
-    private fun syncCatalogToContinueWatching(catalog: Catalog) {
-        worker.execute {
-            try {
-                if (catalog.key == nativeContinueCatalog().key) {
-                    val nativeItems = readNativeContinueWatching()
-                    val firstNative = nativeItems.firstOrNull()
-                    val wanted = nativeItems.drop(1).take(49)
-                    val old = existingIds()
-                    val wantedIds = wanted.map { relayId(it) }.toSet() + setOfNotNull(firstNative?.let { pinnedNativeInternalId })
-                    (old - wantedIds).forEach { deleteRelay(it) }
-                    firstNative?.let { publish(it, pinnedFirst = true) }
-                    val count = wanted.count { publish(it) } + if (firstNative != null) 1 else 0
-                    runOnUiThread { message("Continue Watching refreshed with $count native Nuvio titles.") }
-                    return@execute
-                }
-                val rootUrl = catalog.addon.removeSuffix("/manifest.json").trimEnd('/')
-                val url = rootUrl + "/catalog/" + enc(catalog.type) + "/" + enc(catalog.id) + ".json?skip=0&limit=100"
-                val metas = json(url).optJSONArray("metas") ?: JSONArray()
-                val items = mutableListOf<Item>()
-                for (i in 0 until metas.length()) {
-                    val m = metas.optJSONObject(i) ?: continue
-                    val id = m.optString("id")
-                    val name = m.optString("name")
-                    if (id.isBlank() || name.isBlank()) continue
-                    val type = m.optString("type", catalog.type).ifBlank { catalog.type }
-                    items.add(Item(id, type, name, m.optString("poster").takeIf { it.startsWith("http") }, m.optString("background").takeIf { it.startsWith("http") }, catalog.platformLogo))
-                }
-                val unique = items.distinctBy { it.type.lowercase() + ":" + it.id }.take(49)
-                val firstNative = readNativeContinueWatching().firstOrNull()
-                val old = existingIds()
-                val wantedIds = unique.map { relayId(it) }.toSet() + setOfNotNull(firstNative?.let { pinnedNativeInternalId })
-                (old - wantedIds).forEach { deleteRelay(it) }
-                firstNative?.let { publish(it, pinnedFirst = true) }
-                val count = unique.count { publish(it) } + if (firstNative != null) 1 else 0
-                runOnUiThread { message("Continue Watching refreshed with " + count + " titles from " + catalog.name + ".") }
-            } catch (e: Exception) {
-                runOnUiThread { message("Rotation failed for " + catalog.name + ": " + (e.message ?: "network error")) }
-            }
-        }
+        prefs.edit().putBoolean("rotation_enabled", rotationOn).apply()
+        rotationIndex = 0
+        updateRotationControl("Rotation " + if (rotationOn) "enabled" else "disabled")
+        message(if (rotationOn) "Catalog rotation enabled. The background service owns launcher publishing." else "Catalog rotation paused. The current launcher catalog will continue to refresh.")
     }
 
     private fun readNativeContinueWatching(): List<Item> {
@@ -418,27 +577,9 @@ class MainActivity : Activity() {
         return out.distinctBy { it.type.lowercase() + ":" + it.id }
     }
 
-    private fun loadPoster(url: String, view: ImageView) {
-        worker.execute {
-            try {
-                val cached = PosterCacheProvider.uriFor(this, highestResolutionImage(url) ?: url)
-                val bitmap = cached?.let { contentResolver.openInputStream(it)?.use { stream -> android.graphics.BitmapFactory.decodeStream(stream) } }
-                if (bitmap != null) runOnUiThread { view.setImageBitmap(bitmap) }
-            } catch (_: Exception) { }
-        }
-    }
-
-    private fun openInNuvio(item: Item) {
-        try {
-            val uri = Uri.Builder().scheme("nuvio").authority("meta")
-                .appendQueryParameter("type", item.type.lowercase()).appendQueryParameter("id", item.id).build()
-            startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.nuvioreshaped.tv"))
-        } catch (_: Exception) { message("Could not open this title in Nuvio Re-Shaped.") }
-    }
-
     private fun sync() {
         val chosen = catalogs.filter { it.key in selected }.distinctBy { it.key }
-        if (chosen.isEmpty()) { message("Select at least one catalog."); return }
+        if (chosen.isEmpty()) { message("No catalogs selected. Nothing was synced."); return }
         message("Syncing selected catalogs…")
         worker.execute {
             try {
@@ -457,10 +598,15 @@ class MainActivity : Activity() {
                         val id = m.optString("id"); val name = m.optString("name")
                         if (id.isBlank() || name.isBlank()) continue
                         val type = m.optString("type", c.type).ifBlank { c.type }
+                        // Reuse already-enriched TMDB cache entries. Otherwise manual sync
+                        // used to overwrite a TMDB-updated card with raw add-on artwork/metadata.
+                        val cached = cachedTmdb(m, type)
                         val item = Item(id, type, name,
-                            m.optString("poster").takeIf { it.startsWith("http") },
-                            m.optString("background").takeIf { it.startsWith("http") }, c.platformLogo,
-                            m.optString("logo").takeIf { it.startsWith("http") }, ratingLabel(m))
+                            firstHttp(cached?.optString("poster"), m.optString("poster")),
+                            firstHttp(cached?.optString("background"), m.optString("background"), m.optString("poster")),
+                            c.platformLogo,
+                            firstHttp(cached?.optString("titleLogo"), m.optString("logo")),
+                            ratingLabel(m, cached))
                         all.putIfAbsent(type.lowercase() + ":" + id, item)
                     }
                 }
@@ -471,8 +617,19 @@ class MainActivity : Activity() {
                 var count = 0
                 wanted.forEach { if (publish(it)) count++ }
                 firstNative?.let { if (publish(it, pinnedFirst = true)) count++ }
-                runOnUiThread { message("Published " + count + " unique titles from " + chosen.size + " catalogs.") }
-            } catch (e: Exception) { runOnUiThread { message("Sync failed: " + (e.message ?: "unknown error")) } }
+                runOnUiThread {
+                    val result = "Sync completed: published $count titles from ${chosen.size} catalogs."
+                    manualSyncState?.text = "Status: SUCCESS · $count titles published"
+                    manualSyncState?.setTextColor(Color.rgb(105, 211, 176))
+                    manualSyncButton?.text = "Sync Now  ·  DONE"
+                    message(result)
+                }
+            } catch (e: Exception) { runOnUiThread {
+                manualSyncState?.text = "Status: FAILED · ${e.message ?: "network error"}"
+                manualSyncState?.setTextColor(Color.rgb(255, 130, 120))
+                manualSyncButton?.text = "Sync Now  ·  RETRY"
+                message("Sync failed: " + (e.message ?: "unknown error"))
+            } }
         }
     }
 
@@ -490,7 +647,7 @@ class MainActivity : Activity() {
         val builder = WatchNextProgram.Builder()
             .setType(programType)
             .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_WATCHLIST)
-            .setTitle(item.name)
+            .setTitle(if (pinnedFirst) item.name else "")
             .setLastEngagementTimeUtcMillis(if (pinnedFirst) System.currentTimeMillis() + 86_400_000L else System.currentTimeMillis() - 60_000L)
             .setInternalProviderId(internalId)
             // Store the full Android intent URI so Google TV launches the exact nuvio:// deep link.
@@ -537,13 +694,12 @@ class MainActivity : Activity() {
         val id = findId(key) ?: return false
         return try { contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(id), null, null) > 0 } catch (_: Exception) { false }
     }
-    private fun clearRelay() {
-        worker.execute {
-            val keys = existingIds(); var count = 0
-            keys.forEach { if (deleteRelay(it)) count++ }
-            runOnUiThread { message("Removed " + count + " Relay items.") }
-        }
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        worker.shutdownNow()
+        super.onDestroy()
     }
+
     private fun highestResolutionImage(raw: String?): String? {
         if (raw.isNullOrBlank() || !raw.startsWith("http")) return null
         // TMDB image paths support original-size assets; leave other providers' URLs untouched.
@@ -551,14 +707,68 @@ class MainActivity : Activity() {
             match.groupValues[1] + "original" + match.groupValues[3]
         }
     }
-    private fun ratingLabel(m: JSONObject): String {
-        val imdb = m.optString("imdbRating").trim()
-        if (imdb.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (imdb.toDoubleOrNull()?.let { it in 0.0..10.0 } == true)) return "IMDb ★ $imdb"
-        val generic = m.optString("rating").trim()
-        if (generic.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (generic.toDoubleOrNull()?.let { it in 0.0..10.0 } == true)) return "★ $generic"
-        val votes = m.optDouble("vote_average", -1.0)
-        if (votes in 0.0..10.0) return "TMDB ★ " + String.format(java.util.Locale.US, "%.1f", votes)
-        return ""
+    private fun cachedTmdb(source: JSONObject, type: String): JSONObject? {
+        val title = sequenceOf("name", "title", "original_name", "original_title")
+            .map { source.optString(it).trim() }.firstOrNull { it.isNotBlank() }.orEmpty()
+        if (title.isBlank()) return null
+        fun norm(value: String) = value.lowercase(java.util.Locale.ROOT)
+            .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
+            .replace(Regex("[^\\p{L}\\p{N}]"), " ").replace(Regex("\\s+"), " ").trim()
+        val year = sequenceOf("year", "releaseInfo", "released", "release_date", "first_air_date")
+            .map { source.optString(it) }.firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
+            ?.let { Regex("(19|20)\\d{2}").find(it)?.value }.orEmpty()
+        val imdbId = sequenceOf("imdb_id", "imdbId", "imdbid", "id").map { source.optString(it).trim() }
+            .firstOrNull { it.matches(Regex("tt\\d{7,10}")) }.orEmpty()
+        val tmdbId = sequenceOf("tmdb_id", "tmdbId", "tmdbid", "tmdb")
+            .map { source.optString(it).trim().removePrefix("tmdb:").removePrefix("tmdb_") }
+            .firstOrNull { it.matches(Regex("\\d{1,10}")) && (it.toIntOrNull() ?: 0) > 0 }.orEmpty()
+        val keyInput = "${type.lowercase(java.util.Locale.ROOT)}|${norm(title)}|$year|$imdbId|$tmdbId"
+        val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
+        val file = File(cacheDir, "tmdb-cache/$key.json")
+        if (!file.exists()) return null
+        val age = System.currentTimeMillis() - file.lastModified()
+        if (age < 0 || age > 30L * 24 * 60 * 60 * 1000) return null
+        return runCatching { JSONObject(file.readText()).takeUnless { it.optBoolean("_no_match") } }.getOrNull()
+    }
+
+    private fun firstHttp(vararg values: String?): String? =
+        values.firstOrNull { !it.isNullOrBlank() && it.startsWith("http") }
+
+    private fun ratingLabel(m: JSONObject, cached: JSONObject? = null): String {
+        // Keep the current Apple-TV-style hero metadata format on every publication path.
+        // Older code returned only "IMDb ★ 6.4", which made manual sync/rotation revert
+        // the artwork to the legacy single-line metadata layout.
+        fun score(raw: String): String? = raw.trim().takeIf {
+            it.matches(Regex("[0-9](\\.[0-9]{1,2})?")) && (it.toDoubleOrNull()?.let { n -> n in 0.0..10.0 } == true)
+        }
+        val sourceScore = score(m.optString("imdbRating")) ?: score(m.optString("rating"))
+        val cachedScore = cached?.optDouble("vote_average", -1.0) ?: -1.0
+        val sourceVotes = m.optDouble("vote_average", -1.0)
+        val rating = sourceScore
+            ?: cachedScore.takeIf { it in 0.0..10.0 }?.let { String.format(java.util.Locale.US, "%.1f", it) }
+            ?: sourceVotes.takeIf { it in 0.0..10.0 }?.let { String.format(java.util.Locale.US, "%.1f", it) }
+        val yearSource = sequenceOf(
+            cached?.optString("year").orEmpty(), m.optString("year"), m.optString("releaseInfo"),
+            m.optString("released"), m.optString("release_date"), m.optString("first_air_date")
+        ).firstOrNull { Regex("(19|20)\\d{2}").containsMatchIn(it) }
+        val year = yearSource?.let { Regex("(19|20)\\d{2}").find(it)?.value }
+        val isSeries = sequenceOf(m.optString("type"), cached?.optString("type").orEmpty())
+            .any { it.equals("series", true) || it.equals("tv", true) || it.equals("show", true) }
+        val genreNames = mutableListOf<String>()
+        fun collectGenres(array: JSONArray?) {
+            if (array == null) return
+            for (i in 0 until array.length()) {
+                val item = array.opt(i)
+                val name = (if (item is JSONObject) item.optString("name") else item?.toString().orEmpty()).trim()
+                if (name.isNotBlank() && !name.equals("null", true) && genreNames.size < 2 && name !in genreNames) genreNames.add(name)
+            }
+        }
+        collectGenres(cached?.optJSONArray("genres"))
+        if (genreNames.isEmpty()) collectGenres(m.optJSONArray("genres"))
+        val details = mutableListOf(if (isSeries) "Series" else "Movie")
+        details.addAll(genreNames)
+        val badge = listOfNotNull(rating?.let { "★ $it" }, year).joinToString("  ·  ")
+        return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""
     }
     private fun relayId(item: Item) = "nuvio_relay_" + item.type.lowercase() + "_" + item.id
     private fun normalize(raw: String): String {
@@ -600,8 +810,9 @@ class MainActivity : Activity() {
         }
     }
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
-    private fun button(caption: String, parent: LinearLayout = controls, action: () -> Unit) {
+    private fun button(caption: String, parent: LinearLayout = controls, action: () -> Unit): TextView {
         val b = TextView(this).apply {
+            id = View.generateViewId()
             text = caption
             textSize = 16f
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -625,6 +836,7 @@ class MainActivity : Activity() {
         parent.addView(b, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(4); bottomMargin = dp(4)
         })
+        return b
     }
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun rounded(color: Int, radius: Int) = android.graphics.drawable.GradientDrawable().apply {
