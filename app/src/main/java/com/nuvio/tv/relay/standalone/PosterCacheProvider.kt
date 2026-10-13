@@ -117,9 +117,13 @@ class PosterCacheProvider : ContentProvider() {
                 if (!platformUrl.isNullOrBlank()) {
                     val sourceLogo = decodeUrl(platformUrl, maxWidth = 240, maxHeight = 120)
                     if (sourceLogo != null) {
+                        // Network decoders may return immutable bitmaps; create a mutable ARGB copy
+                        // before changing pixels, otherwise setPixels throws and the entire Hero fails.
+                        val mutableLogo = sourceLogo.copy(Bitmap.Config.ARGB_8888, true)
+                        sourceLogo.recycle()
                         // Convert the provider's colored mark to solid white while preserving transparency.
-                        val whitePixels = IntArray(sourceLogo.width * sourceLogo.height)
-                        sourceLogo.getPixels(whitePixels, 0, sourceLogo.width, 0, 0, sourceLogo.width, sourceLogo.height)
+                        val whitePixels = IntArray(mutableLogo.width * mutableLogo.height)
+                        mutableLogo.getPixels(whitePixels, 0, mutableLogo.width, 0, 0, mutableLogo.width, mutableLogo.height)
                         for (i in whitePixels.indices) {
                             val pixel = whitePixels[i]
                             // TMDB provider marks may be opaque JPEGs with a black background.
@@ -129,20 +133,20 @@ class PosterCacheProvider : ContentProvider() {
                             val alpha = (sourceAlpha * brightness / 255).coerceIn(0, 255)
                             whitePixels[i] = Color.argb(alpha, 255, 255, 255)
                         }
-                        sourceLogo.setPixels(whitePixels, 0, sourceLogo.width, 0, 0, sourceLogo.width, sourceLogo.height)
+                        mutableLogo.setPixels(whitePixels, 0, mutableLogo.width, 0, 0, mutableLogo.width, mutableLogo.height)
                         val maxLogoH = metaSize * 1.20f
                         val maxLogoW = metaSize * 3.8f
-                        val scale = minOf(maxLogoW / sourceLogo.width, maxLogoH / sourceLogo.height)
-                        val logoW = sourceLogo.width * scale
-                        val logoH = sourceLogo.height * scale
+                        val scale = minOf(maxLogoW / mutableLogo.width, maxLogoH / mutableLogo.height)
+                        val logoW = mutableLogo.width * scale
+                        val logoH = mutableLogo.height * scale
                         val gap = metaSize * .70f
                         val logoX = badgeRect.right + gap
                         val logoY = metaBaseline - metaSize * .78f - logoH / 2f
                         paint.alpha = 255
                         paint.setShadowLayer(w * .0018f, 0f, 1f, Color.BLACK)
-                        canvas.drawBitmap(sourceLogo, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), paint)
+                        canvas.drawBitmap(mutableLogo, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), paint)
                         paint.clearShadowLayer()
-                        sourceLogo.recycle()
+                        mutableLogo.recycle()
                     }
                 }
             }
@@ -241,7 +245,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v19-white-platform-mark|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v20-white-platform-mark|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

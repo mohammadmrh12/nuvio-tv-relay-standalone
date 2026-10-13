@@ -50,7 +50,7 @@ class RelaySyncService : Service() {
     /** One-time migration: discard every previously published relay artwork URI and cached composite. */
     private fun enforceArtworkLayoutVersion() {
         val prefs = getSharedPreferences("relay", MODE_PRIVATE)
-        val currentVersion = 15
+        val currentVersion = 16
         if (prefs.getInt("artwork_layout_version", 0) >= currentVersion) return
         runCatching {
             existingIds().forEach { id -> deleteRelay(id) }
