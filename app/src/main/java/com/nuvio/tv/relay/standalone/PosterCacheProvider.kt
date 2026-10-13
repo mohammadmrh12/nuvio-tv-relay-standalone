@@ -121,7 +121,12 @@ class PosterCacheProvider : ContentProvider() {
                         val whitePixels = IntArray(sourceLogo.width * sourceLogo.height)
                         sourceLogo.getPixels(whitePixels, 0, sourceLogo.width, 0, 0, sourceLogo.width, sourceLogo.height)
                         for (i in whitePixels.indices) {
-                            val alpha = Color.alpha(whitePixels[i])
+                            val pixel = whitePixels[i]
+                            // TMDB provider marks may be opaque JPEGs with a black background.
+                            // Turn pixel brightness into alpha so the background disappears when whitened.
+                            val sourceAlpha = Color.alpha(pixel)
+                            val brightness = maxOf(Color.red(pixel), Color.green(pixel), Color.blue(pixel))
+                            val alpha = (sourceAlpha * brightness / 255).coerceIn(0, 255)
                             whitePixels[i] = Color.argb(alpha, 255, 255, 255)
                         }
                         sourceLogo.setPixels(whitePixels, 0, sourceLogo.width, 0, 0, sourceLogo.width, sourceLogo.height)
@@ -236,7 +241,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v17-white-platform-mark|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
+            val descriptor = "hero-v18-white-platform-mark|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

@@ -414,7 +414,7 @@ class RelaySyncService : Service() {
                 if (contentId > 0) {
                     try {
                         val providersResponse = tmdbGet("https://api.themoviedb.org/3/$providerEndpoint/$contentId/watch/providers", token)
-                        val country = providersResponse.optJSONObject("results")?.optJSONObject("IQ")
+                        val country = providersResponse.optJSONObject("results")?.optJSONObject("US")
                         val provider = sequenceOf("flatrate", "free", "ads")
                             .mapNotNull { country?.optJSONArray(it)?.optJSONObject(0) }
                             .firstOrNull { it.optString("logo_path").startsWith("/") }
