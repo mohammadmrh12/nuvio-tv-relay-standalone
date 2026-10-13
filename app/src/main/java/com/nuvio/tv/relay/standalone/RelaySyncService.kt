@@ -139,7 +139,7 @@ class RelaySyncService : Service() {
                     val updatedItem = JSONObject().put("id", mid).put("type", mt).put("name", sourceName)
                         .put("poster", firstHttp(updated.optString("poster"), sourcePoster))
                         .put("background", firstHttp(updated.optString("background"), sourceBackground, sourcePoster))
-                        .put("platformLogo", logo)
+                        .put("platformLogo", firstHttp(updated.optString("platformLogo")))
                         .put("titleLogo", firstHttp(updated.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                         .put("rating", ratingAndYear(updated, mt, m))
                     handler.post {
@@ -151,7 +151,7 @@ class RelaySyncService : Service() {
                 all.putIfAbsent("$mt:$mid", JSONObject().put("id", mid).put("type", mt)
                     .put("name", sourceName).put("poster", firstHttp(enriched.optString("poster"), sourcePoster))
                     .put("background", firstHttp(enriched.optString("background"), sourceBackground, sourcePoster))
-                    .put("platformLogo", logo)
+                    .put("platformLogo", firstHttp(enriched.optString("platformLogo")))
                     .put("titleLogo", firstHttp(enriched.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                     .put("rating", ratingAndYear(enriched, mt, m)))
             }
