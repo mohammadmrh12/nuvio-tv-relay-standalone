@@ -134,14 +134,14 @@ class PosterCacheProvider : ContentProvider() {
                     canvas.drawText(part, metadataX + padX, metaBaseline - metaSize * .02f, textPaint)
                     metadataX = rect.right
                     if (index < parts.lastIndex) {
-                        val dividerX = metadataX + metaSize * .42f
+                        val dividerX = metadataX + metaSize * .65f
                         val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                             color = Color.WHITE
                             strokeWidth = w * .0013f
                             setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK)
                         }
                         canvas.drawLine(dividerX, badgeTop - metaSize * .04f, dividerX, badgeBottom + metaSize * .04f, dividerPaint)
-                        metadataX = dividerX + metaSize * .42f
+                        metadataX = dividerX + metaSize * .65f
                     }
                 }
 
@@ -183,7 +183,7 @@ class PosterCacheProvider : ContentProvider() {
                 val badgePadX = metaSize * .34f
                 val badgePadY = metaSize * .15f
                 val providerWidth = providerPaint.measureText(providerName)
-                val badgeGap = metaSize * .42f
+                val badgeGap = metaSize * .65f
                 val separatorX = metadataX + badgeGap * .5f
                 val providerRect = RectF(
                     metadataX + badgeGap,
