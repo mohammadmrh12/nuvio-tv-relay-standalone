@@ -97,14 +97,14 @@ class PosterCacheProvider : ContentProvider() {
                 .replace(Regex("\\s+"), " ").trim()
             val badgeText = if (split >= 0) rating.substring(split + marker.length).trim() else ""
             val left = w * .045f
-            val metaSize = w * .0105f
+            val metaSize = w * .0112f
             val metaBaseline = h * .325f
             val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 textSize = metaSize
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 style = Paint.Style.FILL
-                setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
+                setShadowLayer(w * .0032f, 0f, 1f, Color.BLACK)
             }
             var metadataX = left
             if (badgeText.isNotBlank()) {
@@ -113,7 +113,7 @@ class PosterCacheProvider : ContentProvider() {
                 val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
                     style = Paint.Style.STROKE
-                    strokeWidth = w * .0012f
+                    strokeWidth = w * .00145f
                     setShadowLayer(w * .002f, 0f, 1f, Color.BLACK)
                 }
                 val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -121,7 +121,7 @@ class PosterCacheProvider : ContentProvider() {
                     textSize = metaSize
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     style = Paint.Style.FILL
-                    setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
+                    setShadowLayer(w * .0032f, 0f, 1f, Color.BLACK)
                 }
                 val padX = metaSize * .34f
                 val padY = metaSize * .15f
@@ -172,24 +172,25 @@ class PosterCacheProvider : ContentProvider() {
                     textSize = metaSize
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     style = Paint.Style.FILL
-                    setShadowLayer(w * .0025f, 0f, 1f, Color.BLACK)
+                    setShadowLayer(w * .0032f, 0f, 1f, Color.BLACK)
                 }
                 val providerOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
                     style = Paint.Style.STROKE
-                    strokeWidth = w * .0012f
+                    strokeWidth = w * .00145f
                     setShadowLayer(w * .002f, 0f, 1f, Color.BLACK)
                 }
                 val badgePadX = metaSize * .34f
                 val badgePadY = metaSize * .15f
                 val providerWidth = providerPaint.measureText(providerName)
+                val badgeGap = metaSize * .42f
+                val separatorX = metadataX + badgeGap * .5f
                 val providerRect = RectF(
-                    metadataX + metaSize * .42f,
+                    metadataX + badgeGap,
                     metaBaseline - metaSize + badgePadY,
-                    metadataX + metaSize * .42f + providerWidth + badgePadX * 2f,
+                    metadataX + badgeGap + providerWidth + badgePadX * 2f,
                     metaBaseline + badgePadY
                 )
-                val separatorX = metadataX + metaSize * .21f
                 val separatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
                     strokeWidth = w * .0013f
@@ -200,19 +201,28 @@ class PosterCacheProvider : ContentProvider() {
                 canvas.drawText(providerName, providerRect.left + badgePadX, metaBaseline - metaSize * .02f, providerPaint)
             }
 
-            val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            val genreOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(210, 0, 0, 0)
+                textSize = metaSize * .90f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                style = Paint.Style.STROKE
+                strokeWidth = w * .0011f
+                strokeJoin = Paint.Join.ROUND
+            }
+            val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                 color = Color.WHITE
                 textSize = metaSize * .90f
-                typeface = Typeface.create("sans-serif-bold", Typeface.NORMAL)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 style = Paint.Style.FILL
                 isSubpixelText = true
-                setShadowLayer(w * .0018f, 0f, 1f, Color.BLACK)
+                setShadowLayer(w * .0032f, 0f, 1f, Color.BLACK)
             }
             val maxGenreWidth = w * .39f
             val measured = genrePaint.measureText(genres)
             if (measured > maxGenreWidth && measured > 0f) {
                 genrePaint.textSize *= maxGenreWidth / measured
             }
+            canvas.drawText(genres, left, h * .36f, genreOutline)
             canvas.drawText(genres, left, h * .36f, genrePaint)
         }
         val temp = File(target.parentFile, target.nameWithoutExtension + ".tmp")
