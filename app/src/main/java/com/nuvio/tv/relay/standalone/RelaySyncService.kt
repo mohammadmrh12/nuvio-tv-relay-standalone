@@ -171,7 +171,8 @@ class RelaySyncService : Service() {
                                 val art = PosterCacheProvider.heroUriFor(
                                     this, background,
                                     highestResolutionImage(item.optString("titleLogo")),
-                                    item.optString("rating")
+                                    item.optString("rating"),
+                                    highestResolutionImage(item.optString("platformLogo"))
                                 )
                                 if (art != null) contentResolver.openFileDescriptor(art, "r")?.use { }
                             }
@@ -213,7 +214,7 @@ class RelaySyncService : Service() {
             .setInternalProviderId(if (pinnedFirst) "nuvio_relay_pinned_native_first" else relayId(m)).setIntentUri(launcherIntentUri)
             .setPosterArtAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9)
         val background = highestResolutionImage(m.optString("background")) ?: highestResolutionImage(m.optString("poster"))
-        PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(m.optString("titleLogo")), m.optString("rating"))
+        PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(m.optString("titleLogo")), m.optString("rating"), highestResolutionImage(m.optString("platformLogo")))
             ?.let { builder.setPosterArtUri(it) }
         m.optString("platformLogo").takeIf { it.startsWith("http") }?.let { builder.setLogoUri(Uri.parse(it)) }
         try {
@@ -282,7 +283,7 @@ class RelaySyncService : Service() {
     /** Merges only validated TMDB fields over source metadata; source fields remain the fallback. */
     private fun mergeTmdb(source: JSONObject, enrichment: JSONObject): JSONObject {
         val merged = JSONObject(source.toString())
-        for (field in arrayOf("poster", "background", "titleLogo")) {
+        for (field in arrayOf("poster", "background", "titleLogo", "platformLogo")) {
             val value = enrichment.optString(field)
             if (value.startsWith("https://") && value.length > 12) merged.put(field, value)
         }
@@ -334,7 +335,9 @@ class RelaySyncService : Service() {
                 try {
                     val cached = JSONObject(file.readText())
                     if (cached.optBoolean("_no_match")) return source
-                    return mergeTmdb(source, cached)
+                    // Older positive cache entries predate watch-provider metadata. Refresh them
+                    // asynchronously instead of hiding platform logos for the full cache lifetime.
+                    if (cached.has("platformLogo") || !allowFetch) return mergeTmdb(source, cached)
                 } catch (_: Exception) { }
             }
         }
@@ -404,6 +407,24 @@ class RelaySyncService : Service() {
                     ?: match?.optString("backdrop_path")?.takeIf { it.startsWith("/") }
                 if (posterPath != null) result.put("poster", "https://image.tmdb.org/t/p/original$posterPath")
                 if (backdropPath != null) result.put("background", "https://image.tmdb.org/t/p/original$backdropPath")
+                // Resolve the actual streaming platform for Iraq. Prefer subscription providers;
+                // free/ad-supported services are fallbacks. Rental and purchase storefronts are not platforms.
+                val providerEndpoint = if (isTv) "tv" else "movie"
+                val contentId = chosen.optInt("id", 0)
+                if (contentId > 0) {
+                    try {
+                        val providersResponse = tmdbGet("https://api.themoviedb.org/3/$providerEndpoint/$contentId/watch/providers", token)
+                        val country = providersResponse.optJSONObject("results")?.optJSONObject("IQ")
+                        val provider = sequenceOf("flatrate", "free", "ads")
+                            .mapNotNull { country?.optJSONArray(it)?.optJSONObject(0) }
+                            .firstOrNull { it.optString("logo_path").startsWith("/") }
+                        provider?.optString("logo_path")?.takeIf { it.startsWith("/") }?.let {
+                            result.put("platformLogo", "https://image.tmdb.org/t/p/w185$it")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.d("NuvioRelay", "TMDB watch provider unavailable for ${title.take(60)}")
+                    }
+                }
                 val logos = chosen.optJSONObject("images")?.optJSONArray("logos")
                 if (logos != null) {
                     var selectedPath: String? = null

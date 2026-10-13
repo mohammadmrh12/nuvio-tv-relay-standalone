@@ -53,6 +53,7 @@ class PosterCacheProvider : ContentProvider() {
         val bgUrl = uri.getQueryParameter("background") ?: throw java.io.FileNotFoundException("Hero background missing")
         val logoUrl = uri.getQueryParameter("logo")
         val rating = uri.getQueryParameter("rating").orEmpty().trim()
+        val platformUrl = uri.getQueryParameter("platform")
         val bg = decodeUrl(bgUrl, maxWidth = 1920, maxHeight = 1080) ?: throw java.io.FileNotFoundException("Hero background could not be decoded")
         // Decode to a TV-appropriate working size. TMDB's original asset can be 4K+;
         // decoding it full-size and allocating a second ARGB bitmap needlessly spikes RAM.
@@ -113,6 +114,32 @@ class PosterCacheProvider : ContentProvider() {
                 }
                 canvas.drawRoundRect(badgeRect, metaSize * .20f, metaSize * .20f, badgePaint)
                 canvas.drawText(badgeText, left + padX, metaBaseline - metaSize * .02f, tp)
+                if (!platformUrl.isNullOrBlank()) {
+                    val sourceLogo = decodeUrl(platformUrl, maxWidth = 240, maxHeight = 120)
+                    if (sourceLogo != null) {
+                        // Convert the provider's colored mark to solid white while preserving transparency.
+                        val whitePixels = IntArray(sourceLogo.width * sourceLogo.height)
+                        sourceLogo.getPixels(whitePixels, 0, sourceLogo.width, 0, 0, sourceLogo.width, sourceLogo.height)
+                        for (i in whitePixels.indices) {
+                            val alpha = Color.alpha(whitePixels[i])
+                            whitePixels[i] = Color.argb(alpha, 255, 255, 255)
+                        }
+                        sourceLogo.setPixels(whitePixels, 0, sourceLogo.width, 0, 0, sourceLogo.width, sourceLogo.height)
+                        val maxLogoH = metaSize * 1.20f
+                        val maxLogoW = metaSize * 3.8f
+                        val scale = minOf(maxLogoW / sourceLogo.width, maxLogoH / sourceLogo.height)
+                        val logoW = sourceLogo.width * scale
+                        val logoH = sourceLogo.height * scale
+                        val gap = metaSize * .70f
+                        val logoX = badgeRect.right + gap
+                        val logoY = metaBaseline - metaSize * .78f - logoH / 2f
+                        paint.alpha = 255
+                        paint.setShadowLayer(w * .0018f, 0f, 1f, Color.BLACK)
+                        canvas.drawBitmap(sourceLogo, null, RectF(logoX, logoY, logoX + logoW, logoY + logoH), paint)
+                        paint.clearShadowLayer()
+                        sourceLogo.recycle()
+                    }
+                }
             }
             val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
@@ -206,14 +233,15 @@ class PosterCacheProvider : ContentProvider() {
                 .buildUpon().appendQueryParameter("url", raw).build()
         }
 
-        fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?): Uri? {
+        fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
-            if (logo.isNullOrBlank() && rating.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v16-current-apple-tv-metadata-lock|$background|${logo.orEmpty()}|${rating.orEmpty()}"
+            if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
+            val descriptor = "hero-v17-white-platform-mark|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
-                .apply { if (!rating.isNullOrBlank()) appendQueryParameter("rating", rating) }.build()
+                .apply { if (!rating.isNullOrBlank()) appendQueryParameter("rating", rating) }
+                .apply { if (!platform.isNullOrBlank() && platform.startsWith("https://image.tmdb.org/")) appendQueryParameter("platform", platform) }.build()
         }
 
         private fun sha256(value: String) =
