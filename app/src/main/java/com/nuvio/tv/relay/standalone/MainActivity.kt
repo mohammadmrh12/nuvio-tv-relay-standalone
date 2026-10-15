@@ -54,7 +54,7 @@ class MainActivity : Activity() {
     data class Catalog(val addon: String, val addonName: String, val type: String, val id: String, val name: String, val platformLogo: String?) {
         val key: String get() = addon + "|" + type + "|" + id
     }
-    data class Item(val id: String, val type: String, val name: String, val poster: String?, val background: String?, val platformLogo: String?, val titleLogo: String? = null, val rating: String = "")
+    data class Item(val id: String, val type: String, val name: String, val poster: String?, val background: String?, val platformLogo: String?, val titleLogo: String? = null, val rating: String = "", val overview: String = "")
     private val pinnedNativeInternalId = "nuvio_relay_pinned_native_first"
     private fun nativeContinueCatalog() = Catalog("nuvio-native://continue-watching", "Nuvio Re-Shaped", "native", "continue-watching", "Nuvio Re-Shaped Continue Watching", null)
     private fun withNativeContinue(items: List<Catalog>): List<Catalog> = (items.filterNot { it.key == nativeContinueCatalog().key } + nativeContinueCatalog())
@@ -661,7 +661,8 @@ class MainActivity : Activity() {
                             firstHttp(cached?.optString("background"), m.optString("background"), m.optString("poster")),
                             c.platformLogo,
                             firstHttp(cached?.optString("titleLogo"), m.optString("logo")),
-                            ratingLabel(m, cached))
+                            ratingLabel(m, cached),
+                            firstHttp(cached?.optString("overview"), m.optString("overview")).orEmpty())
                         all.putIfAbsent(type.lowercase() + ":" + id, item)
                     }
                 }
@@ -704,7 +705,9 @@ class MainActivity : Activity() {
             .setIntentUri(launcherIntentUri)
             .setPosterArtAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9)
         val background = highestResolutionImage(item.background) ?: highestResolutionImage(item.poster)
-        PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(item.titleLogo), item.rating)
+        PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(item.titleLogo), item.rating,
+            item.platformLogo, null, item.overview,
+            if (prefs.getString("description_language", "en") == "ar") "ar" else "en")
             ?.let { builder.setPosterArtUri(it) }
         item.platformLogo?.let { builder.setLogoUri(Uri.parse(it)) }
         return try {

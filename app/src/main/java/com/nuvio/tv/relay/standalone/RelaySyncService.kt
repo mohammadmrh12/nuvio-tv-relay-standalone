@@ -220,7 +220,7 @@ class RelaySyncService : Service() {
         val background = highestResolutionImage(m.optString("background")) ?: highestResolutionImage(m.optString("poster"))
         PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(m.optString("titleLogo")), m.optString("rating"),
             m.optString("platformIcon").takeIf { it.startsWith("asset:") } ?: highestResolutionImage(m.optString("platformLogo")),
-            m.optString("platformName"))
+            m.optString("platformName"), m.optString("overview"), descriptionLanguage())
             ?.let { builder.setPosterArtUri(it) }
         m.optString("platformLogo").takeIf { it.startsWith("http") }?.let { builder.setLogoUri(Uri.parse(it)) }
         try {
