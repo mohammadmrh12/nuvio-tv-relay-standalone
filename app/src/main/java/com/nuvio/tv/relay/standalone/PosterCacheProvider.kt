@@ -78,7 +78,7 @@ class PosterCacheProvider : ContentProvider() {
             if (logo != null) {
                 // Fixed normalized logo box: every hero uses identical placement and bounds.
                 val left = w * .045f
-                val logoTop = h * .135f
+                val logoTop = h * .18f
                 val boxW = w * .19f
                 val boxH = h * .115f
                 val factor = minOf(boxW / logo.width, boxH / logo.height)
@@ -104,7 +104,7 @@ class PosterCacheProvider : ContentProvider() {
             val badgeText = if (split >= 0) rating.substring(split + marker.length).trim() else ""
             val left = w * .045f
             val metaSize = w * .0112f
-            val metaBaseline = h * .285f
+            val metaBaseline = h * .325f
             val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 textSize = metaSize
@@ -228,8 +228,8 @@ class PosterCacheProvider : ContentProvider() {
             if (measured > maxGenreWidth && measured > 0f) {
                 genrePaint.textSize *= maxGenreWidth / measured
             }
-            canvas.drawText(genres, left, h * .325f, genreOutline)
-            canvas.drawText(genres, left, h * .325f, genrePaint)
+            canvas.drawText(genres, left, h * .36f, genreOutline)
+            canvas.drawText(genres, left, h * .36f, genrePaint)
         }
         if (overview.isNotBlank()) {
             val left = w * .045f
@@ -347,7 +347,7 @@ class PosterCacheProvider : ContentProvider() {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             val effectiveOverview = if (context.getSharedPreferences("relay", android.content.Context.MODE_PRIVATE).getBoolean("synopsis_enabled", true)) overview else null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && effectiveOverview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v38-strict-clip-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
+            val descriptor = "hero-v39-strict-clip-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

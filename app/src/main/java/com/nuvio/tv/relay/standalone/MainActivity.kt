@@ -183,7 +183,7 @@ class MainActivity : Activity() {
         }
         // Render explicit ON/OFF state; unlike a CheckBox this is reliable with TV D-pad focus.
         synopsisToggle?.text = "SYNOPSIS: " + (if (prefs.getBoolean("synopsis_enabled", true)) "ON" else "OFF") + "  ·  Press OK to change"
-        controls.addView(synopsisToggle)
+        // button() already attaches synopsisToggle to controls; do not add it twice.
         controls.addView(label("TMDB ENRICHMENT", 13, Color.rgb(94, 190, 255), true))
         controls.addView(label("Add a TMDB API Read Access Token to enrich missing posters, backdrops, logos, ratings and release years. The token is stored locally on this device.", 13, Color.rgb(153, 170, 192)))
         val tmdbTokenInput = EditText(this).apply {
