@@ -235,11 +235,11 @@ class PosterCacheProvider : ContentProvider() {
             val left = w * .045f
             val descriptionPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                 color = Color.WHITE
-                textSize = w * .0092f
+                textSize = w * .0095f
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setShadowLayer(w * .0028f, 0f, 1f, Color.BLACK)
             }
-            val maxDescriptionWidth = (w * .39f).toInt().coerceAtLeast(1)
+            val maxDescriptionWidth = (w * .405f).toInt().coerceAtLeast(1)
             val direction = if (descriptionLanguage.equals("ar", true)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
             val layout = StaticLayout.Builder.obtain(overview.replace(Regex("\\s+"), " ").trim(), 0, overview.replace(Regex("\\s+"), " ").trim().length, descriptionPaint, maxDescriptionWidth)
                 .setAlignment(if (descriptionLanguage.equals("ar", true)) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_NORMAL)
@@ -335,15 +335,16 @@ class PosterCacheProvider : ContentProvider() {
 
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null, platformName: String? = null, overview: String? = null, descriptionLanguage: String = "en"): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
-            if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && overview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v34-description-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${overview.orEmpty()}"
+            val effectiveOverview = if (context.getSharedPreferences("relay", android.content.Context.MODE_PRIVATE).getBoolean("synopsis_enabled", true)) overview else null
+            if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && effectiveOverview.isNullOrBlank()) return uriFor(context, background)
+            val descriptor = "hero-v35-description-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
                 .apply { if (!rating.isNullOrBlank()) appendQueryParameter("rating", rating) }
                 .apply { if (!platform.isNullOrBlank() && (platform.startsWith("https://image.tmdb.org/") || platform.startsWith("asset:"))) appendQueryParameter("platform", platform) }
                 .apply { if (!platformName.isNullOrBlank()) appendQueryParameter("platformName", platformName) }
-                .apply { if (!overview.isNullOrBlank()) appendQueryParameter("overview", overview) }
+                .apply { if (!effectiveOverview.isNullOrBlank()) appendQueryParameter("overview", effectiveOverview) }
                 .appendQueryParameter("descriptionLanguage", descriptionLanguage).build()
         }
 
