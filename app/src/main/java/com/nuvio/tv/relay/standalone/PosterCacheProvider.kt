@@ -189,7 +189,7 @@ class PosterCacheProvider : ContentProvider() {
                 val badgePadX = metaSize * .34f
                 val badgePadY = metaSize * .15f
                 val providerWidth = providerPaint.measureText(providerName)
-                val badgeGap = metaSize * .60f
+                val badgeGap = metaSize * .90f
                 val separatorX = metadataX + badgeGap * .5f
                 val providerRect = RectF(
                     metadataX + badgeGap,
@@ -209,7 +209,7 @@ class PosterCacheProvider : ContentProvider() {
 
             val genreOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb(210, 0, 0, 0)
-                textSize = metaSize * .90f
+                textSize = metaSize
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 style = Paint.Style.STROKE
                 strokeWidth = metaSize * .08f
@@ -217,7 +217,7 @@ class PosterCacheProvider : ContentProvider() {
             }
             val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                 color = Color.WHITE
-                textSize = metaSize * .90f
+                textSize = metaSize
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 style = Paint.Style.FILL
                 isSubpixelText = true
@@ -228,8 +228,9 @@ class PosterCacheProvider : ContentProvider() {
             if (measured > maxGenreWidth && measured > 0f) {
                 genrePaint.textSize *= maxGenreWidth / measured
             }
-            canvas.drawText(genres, left, h * .36f, genreOutline)
-            canvas.drawText(genres, left, h * .36f, genrePaint)
+            genreOutline.textSize = genrePaint.textSize
+            canvas.drawText(genres, left, h * .35f, genreOutline)
+            canvas.drawText(genres, left, h * .35f, genrePaint)
         }
         if (overview.isNotBlank()) {
             val left = w * .045f
@@ -246,27 +247,45 @@ class PosterCacheProvider : ContentProvider() {
             val boxHeight = (h * .18f).toInt().coerceAtLeast(1)
             val normalizedOverview = overview.replace(Regex("\\s+"), " ").trim()
             val direction = if (descriptionLanguage.equals("ar", true)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
-            // Exactly four explicit lines, up to seven words on each line (28 words total).
-            // When longer, cut only at a word boundary and mark the shortened synopsis.
+            // Keep seven words per line, up to four lines; shrink text to fit instead of silently wrapping.
             val words = normalizedOverview.split(Regex("\\s+")).filter { it.isNotBlank() }
-            val cappedText = words.chunked(7).take(4).joinToString(" \n") { it.joinToString(" ") }
-            val textToDraw = if (words.size > 28) cappedText.trimEnd() + "…" else cappedText
             descriptionPaint.textSize = (w * .0105f).coerceAtLeast(18f)
-            val layout = StaticLayout.Builder.obtain(textToDraw, 0, textToDraw.length, descriptionPaint, boxWidth)
-                // Keep the synopsis anchored to the same left edge as the metadata for every language.
-                // ALIGN_OPPOSITE with RTL text gives a left-aligned block without changing Arabic shaping.
-                .setAlignment(if (descriptionLanguage.equals("ar", true)) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL)
+            val visibleWords = words.take(28)
+            val lines = visibleWords.chunked(7).map { it.joinToString(" ") }.toMutableList()
+            val truncated = words.size > 28
+            if (truncated && lines.isNotEmpty()) {
+                // Preserve all seven words on the fourth line; the fit calculation below also includes the ellipsis.
+                lines[lines.lastIndex] = lines.last() + "…"
+            }
+            val widestLine = lines.maxOfOrNull { descriptionPaint.measureText(it) } ?: 0f
+            if (widestLine > boxWidth && widestLine > 0f) {
+                descriptionPaint.textSize *= boxWidth / widestLine
+            }
+            val finalText = lines.take(4).joinToString("\n")
+            val alignment = if (descriptionLanguage.equals("ar", true)) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
+            fun buildSynopsisLayout(paint: TextPaint) = StaticLayout.Builder.obtain(finalText, 0, finalText.length, paint, boxWidth)
+                .setAlignment(alignment)
                 .setTextDirection(direction)
                 .setIncludePad(false)
                 .setMaxLines(4)
                 .setEllipsize(android.text.TextUtils.TruncateAt.END)
                 .setLineSpacing(w * .0007f, 1.0f)
                 .build()
+            val descriptionOutlinePaint = TextPaint(descriptionPaint).apply {
+                color = Color.argb(190, 0, 0, 0)
+                style = Paint.Style.STROKE
+                strokeWidth = descriptionPaint.textSize * .07f
+                strokeJoin = Paint.Join.ROUND
+                clearShadowLayer()
+            }
+            val outlineLayout = buildSynopsisLayout(descriptionOutlinePaint)
+            val layout = buildSynopsisLayout(descriptionPaint)
             canvas.save()
             // Clip before translation in bitmap coordinates, then clip again in local text coordinates.
             canvas.clipRect(left, boxTop, left + boxWidth, boxTop + boxHeight)
             canvas.translate(left, boxTop)
             canvas.clipRect(0f, 0f, boxWidth.toFloat(), boxHeight.toFloat())
+            outlineLayout.draw(canvas)
             layout.draw(canvas)
             canvas.restore()
         }
@@ -353,7 +372,7 @@ class PosterCacheProvider : ContentProvider() {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             val effectiveOverview = if (context.getSharedPreferences("relay", android.content.Context.MODE_PRIVATE).getBoolean("synopsis_enabled", true)) overview else null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && effectiveOverview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v43-left-aligned-four-by-seven-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
+            val descriptor = "hero-v44-left-aligned-four-by-seven-outlined-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }

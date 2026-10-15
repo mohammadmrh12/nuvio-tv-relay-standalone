@@ -339,7 +339,8 @@ class RelaySyncService : Service() {
         val cacheDir = File(cacheDir, "tmdb-cache").apply { mkdirs() }
         val descriptionLanguage = descriptionLanguage()
         val tmdbLanguage = when (descriptionLanguage) { "ar" -> "ar-SA"; "fr" -> "fr-FR"; "de" -> "de-DE"; else -> "en-US" }
-        val fallbackLanguage = when (descriptionLanguage) { "ar" -> "en-US"; "fr" -> "en-US"; "de" -> "en-US"; else -> "fr-FR" }
+        // English is the consistent fallback when the selected localized synopsis is unavailable.
+        val fallbackLanguage = "en-US"
         val keyInput = "provider-icons-v4-synopsis-$descriptionLanguage|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
         val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
         val file = File(cacheDir, "$key.json")
@@ -487,8 +488,8 @@ class RelaySyncService : Service() {
                     result.put("genres", names)
                 }
                 var overview = chosen.optString("overview").trim()
-                if (overview.isBlank() && contentId > 0) {
-                    // If TMDB has no synopsis in the selected language, fall back to the other language.
+                if (overview.isBlank() && contentId > 0 && descriptionLanguage != "en") {
+                    // If the requested localized synopsis is missing, use English rather than an unrelated language.
                     overview = runCatching {
                         tmdbGet("https://api.themoviedb.org/3/$endpoint/$contentId?language=$fallbackLanguage", token).optString("overview").trim()
                     }.getOrDefault("")

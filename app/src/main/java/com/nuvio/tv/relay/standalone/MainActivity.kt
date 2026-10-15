@@ -719,7 +719,7 @@ class MainActivity : Activity() {
         val background = highestResolutionImage(item.background) ?: highestResolutionImage(item.poster)
         PosterCacheProvider.heroUriFor(this, background, highestResolutionImage(item.titleLogo), item.rating,
             item.platformLogo, null, item.overview,
-            if (prefs.getString("description_language", "en") == "ar") "ar" else "en")
+            prefs.getString("description_language", "en")?.takeIf { it in setOf("ar", "en", "fr", "de") } ?: "en")
             ?.let { builder.setPosterArtUri(it) }
         item.platformLogo?.let { builder.setLogoUri(Uri.parse(it)) }
         return try {
@@ -787,13 +787,24 @@ class MainActivity : Activity() {
         val tmdbId = sequenceOf("tmdb_id", "tmdbId", "tmdbid", "tmdb")
             .map { source.optString(it).trim().removePrefix("tmdb:").removePrefix("tmdb_") }
             .firstOrNull { it.matches(Regex("\\d{1,10}")) && (it.toIntOrNull() ?: 0) > 0 }.orEmpty()
-        val keyInput = "${type.lowercase(java.util.Locale.ROOT)}|${norm(title)}|$year|$imdbId|$tmdbId"
-        val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
-        val file = File(cacheDir, "tmdb-cache/$key.json")
-        if (!file.exists()) return null
-        val age = System.currentTimeMillis() - file.lastModified()
-        if (age < 0 || age > 30L * 24 * 60 * 60 * 1000) return null
-        return runCatching { JSONObject(file.readText()).takeUnless { it.optBoolean("_no_match") } }.getOrNull()
+        val identity = "${type.lowercase(java.util.Locale.ROOT)}|${norm(title)}|$year|$imdbId|$tmdbId"
+        val language = prefs.getString("description_language", "en") ?: "en"
+        // Match the service's language-scoped cache first; retain legacy lookup for older installs.
+        val keyInputs = listOf("provider-icons-v4-synopsis-$language|$identity", identity)
+        for (keyInput in keyInputs) {
+            val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
+            val file = File(cacheDir, "tmdb-cache/$key.json")
+            if (!file.exists()) continue
+            val age = System.currentTimeMillis() - file.lastModified()
+            if (age < 0 || age > 30L * 24 * 60 * 60 * 1000) continue
+            val cached = runCatching { JSONObject(file.readText()).takeUnless { it.optBoolean("_no_match") } }.getOrNull()
+            if (cached != null) {
+                // Legacy cache entries are not language-scoped; never reuse their synopsis for ar/fr/de.
+                if (keyInput == identity && language != "en") cached.remove("overview")
+                return cached
+            }
+        }
+        return null
     }
 
     private fun firstHttp(vararg values: String?): String? =
