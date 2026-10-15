@@ -11,7 +11,7 @@ object NuvioTarget {
     const val LEGACY = "legacy"
 
     fun packageName(context: Context): String = when (target(context)) {
-        LEGACY -> "com.nuvio.tv"
+        LEGACY -> "space.nuvio.nativelegacy"
         else -> "com.nuvioreshaped.tv"
     }
 
@@ -20,21 +20,21 @@ object NuvioTarget {
 
     fun intent(context: Context, type: String, id: String): Intent {
         val selected = target(context)
-        val normalizedType = when (type.lowercase()) {
-            "series", "tv", "show", "episode" -> "tv"
-            else -> "movie"
+        val flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        if (selected == LEGACY) {
+            // The installed Native Legacy package exposes launcher activities only; device
+            // package inspection confirms it has no VIEW/deep-link filters. Launch its original
+            // icon activity explicitly rather than sending nuvio:// to Relay or another Nuvio app.
+            return Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+                .setClassName("space.nuvio.nativelegacy", "space.nuvio.nativelegacy.Icone_original")
+                .addFlags(flags)
         }
-        val uri = if (selected == LEGACY && id.matches(Regex("\\d{1,12}"))) {
-            // Legacy's native TMDB deep link. Non-numeric add-on IDs (for example IMDb tt IDs)
-            // must keep the metadata deep link instead of being misrepresented as TMDB IDs.
-            Uri.parse("nuvio://tmdb/$normalizedType/$id")
-        } else {
-            Uri.Builder().scheme("nuvio").authority("meta")
-                .appendQueryParameter("type", type.lowercase())
-                .appendQueryParameter("id", id).build()
-        }
+        val uri = Uri.Builder().scheme("nuvio").authority("meta")
+            .appendQueryParameter("type", type.lowercase())
+            .appendQueryParameter("id", id).build()
         return Intent(Intent.ACTION_VIEW, uri)
-            .setPackage(packageName(context))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .setPackage("com.nuvioreshaped.tv")
+            .addFlags(flags)
     }
 }
