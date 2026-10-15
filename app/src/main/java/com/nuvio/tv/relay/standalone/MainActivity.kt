@@ -125,20 +125,20 @@ class MainActivity : Activity() {
         fun refreshTargetStatus() {
             targetStatus.text = "Selected: " + if (NuvioTarget.target(this) == NuvioTarget.LEGACY) "Nuvio Legacy" else "Nuvio Re-Shaped"
         }
-        val reshapedTargetButton = button("Nuvio Re-Shaped", action = {
+        val reshapedTargetButton = button("Nuvio Re-Shaped", parent = targetRow, action = {
             prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.RESHAPED).apply()
             refreshTargetStatus()
             Toast.makeText(this, "Play target set to Nuvio Re-Shaped", Toast.LENGTH_SHORT).show()
             runManualSync()
         })
-        val legacyTargetButton = button("Nuvio Legacy", action = {
+        val legacyTargetButton = button("Nuvio Legacy", parent = targetRow, action = {
             prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.LEGACY).apply()
             refreshTargetStatus()
             Toast.makeText(this, "Play target set to Nuvio Legacy", Toast.LENGTH_SHORT).show()
             runManualSync()
         })
-        targetRow.addView(reshapedTargetButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
-        targetRow.addView(legacyTargetButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        (reshapedTargetButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(8) }
+        (legacyTargetButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f }
         controls.addView(targetRow)
         controls.addView(targetStatus)
         refreshTargetStatus()
@@ -153,20 +153,20 @@ class MainActivity : Activity() {
             val current = prefs.getString("description_language", "en") ?: "en"
             descriptionLanguageStatus.text = "Selected: " + if (current == "ar") "العربية" else "English"
         }
-        val arabicDescriptionButton = button("العربية", action = {
+        val arabicDescriptionButton = button("العربية", parent = descriptionLanguageRow, action = {
             prefs.edit().putString("description_language", "ar").apply()
             updateDescriptionLanguageButtons()
             Toast.makeText(this, "Description language: Arabic. Syncing…", Toast.LENGTH_SHORT).show()
             runManualSync()
         })
-        val englishDescriptionButton = button("English", action = {
+        val englishDescriptionButton = button("English", parent = descriptionLanguageRow, action = {
             prefs.edit().putString("description_language", "en").apply()
             updateDescriptionLanguageButtons()
             Toast.makeText(this, "Description language: English. Syncing…", Toast.LENGTH_SHORT).show()
             runManualSync()
         })
-        descriptionLanguageRow.addView(arabicDescriptionButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
-        descriptionLanguageRow.addView(englishDescriptionButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        (arabicDescriptionButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(8) }
+        (englishDescriptionButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f }
         controls.addView(descriptionLanguageRow)
         controls.addView(descriptionLanguageStatus)
         updateDescriptionLanguageButtons()
