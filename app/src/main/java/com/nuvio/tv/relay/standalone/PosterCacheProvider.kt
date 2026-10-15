@@ -241,18 +241,22 @@ class PosterCacheProvider : ContentProvider() {
             }
             // Fixed invisible text box: content may wrap or ellipsize, but can never
             // escape horizontally or vertically into the character/artwork area.
-            val boxTop = h * .395f
+            val boxTop = h * .365f
             val boxWidth = (w * .42f).toInt().coerceAtLeast(1)
-            val boxHeight = (h * .155f).toInt().coerceAtLeast(1)
+            val boxHeight = (h * .18f).toInt().coerceAtLeast(1)
             val normalizedOverview = overview.replace(Regex("\\s+"), " ").trim()
             val direction = if (descriptionLanguage.equals("ar", true)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
-            // Scale font to the actual artwork dimensions (bitmap width can vary by source).
+            // Hard cap each visual line at seven words, then retain at most five lines.
+            // If the synopsis is longer, truncate at a word boundary with an ellipsis.
+            val words = normalizedOverview.split(Regex("\\s+")).filter { it.isNotBlank() }
+            val cappedText = words.chunked(7).take(5).joinToString(" \n") { it.joinToString(" ") }
+            val textToDraw = if (words.size > 35) cappedText.trimEnd() + "…" else cappedText
             descriptionPaint.textSize = (w * .0105f).coerceAtLeast(18f)
-            val layout = StaticLayout.Builder.obtain(normalizedOverview, 0, normalizedOverview.length, descriptionPaint, boxWidth)
+            val layout = StaticLayout.Builder.obtain(textToDraw, 0, textToDraw.length, descriptionPaint, boxWidth)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .setTextDirection(direction)
                 .setIncludePad(false)
-                .setMaxLines(4)
+                .setMaxLines(5)
                 .setEllipsize(android.text.TextUtils.TruncateAt.END)
                 .setLineSpacing(w * .0007f, 1.0f)
                 .build()
@@ -347,7 +351,7 @@ class PosterCacheProvider : ContentProvider() {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             val effectiveOverview = if (context.getSharedPreferences("relay", android.content.Context.MODE_PRIVATE).getBoolean("synopsis_enabled", true)) overview else null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && effectiveOverview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v40-balanced-metadata-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
+            val descriptor = "hero-v41-five-by-seven-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
