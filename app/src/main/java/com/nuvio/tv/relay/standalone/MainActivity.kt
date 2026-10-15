@@ -170,22 +170,19 @@ class MainActivity : Activity() {
         controls.addView(descriptionLanguageRow)
         controls.addView(descriptionLanguageStatus)
         updateDescriptionLanguageButtons()
-        val synopsisToggle = CheckBox(this).apply {
-            text = "Show synopsis on hero artwork"
-            textSize = 15f
-            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-            setTextColor(Color.WHITE)
-            buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(65, 190, 255))
+        var synopsisToggle: TextView? = null
+        synopsisToggle = button("", action = {
+            val enabled = !prefs.getBoolean("synopsis_enabled", true)
+            prefs.edit().putBoolean("synopsis_enabled", enabled).commit()
+            synopsisToggle?.text = "SYNOPSIS: " + (if (enabled) "ON" else "OFF") + "  ·  Press OK to change"
+            Toast.makeText(this@MainActivity, if (enabled) "Synopsis ON · syncing titles" else "Synopsis OFF · syncing titles", Toast.LENGTH_SHORT).show()
+            runManualSync()
+        }).apply {
             isFocusable = true
             isFocusableInTouchMode = true
-            setPadding(0, dp(8), dp(8), dp(8))
-            setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean("synopsis_enabled", checked).commit()
-                Toast.makeText(this@MainActivity, if (checked) "Synopsis enabled. Syncing…" else "Synopsis disabled. Syncing…", Toast.LENGTH_SHORT).show()
-                runManualSync()
-            }
-            isChecked = prefs.getBoolean("synopsis_enabled", true)
         }
+        // Render explicit ON/OFF state; unlike a CheckBox this is reliable with TV D-pad focus.
+        synopsisToggle?.text = "SYNOPSIS: " + (if (prefs.getBoolean("synopsis_enabled", true)) "ON" else "OFF") + "  ·  Press OK to change"
         controls.addView(synopsisToggle)
         controls.addView(label("TMDB ENRICHMENT", 13, Color.rgb(94, 190, 255), true))
         controls.addView(label("Add a TMDB API Read Access Token to enrich missing posters, backdrops, logos, ratings and release years. The token is stored locally on this device.", 13, Color.rgb(153, 170, 192)))

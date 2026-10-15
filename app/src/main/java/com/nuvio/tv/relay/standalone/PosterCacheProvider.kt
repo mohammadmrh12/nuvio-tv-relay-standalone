@@ -343,7 +343,7 @@ class PosterCacheProvider : ContentProvider() {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             val effectiveOverview = if (context.getSharedPreferences("relay", android.content.Context.MODE_PRIVATE).getBoolean("synopsis_enabled", true)) overview else null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && effectiveOverview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v36-fixed-box-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
+            val descriptor = "hero-v37-fixed-box-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
