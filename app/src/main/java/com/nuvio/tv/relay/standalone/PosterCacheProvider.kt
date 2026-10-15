@@ -78,7 +78,7 @@ class PosterCacheProvider : ContentProvider() {
             if (logo != null) {
                 // Fixed normalized logo box: every hero uses identical placement and bounds.
                 val left = w * .045f
-                val logoTop = h * .18f
+                val logoTop = h * .135f
                 val boxW = w * .19f
                 val boxH = h * .115f
                 val factor = minOf(boxW / logo.width, boxH / logo.height)
@@ -104,7 +104,7 @@ class PosterCacheProvider : ContentProvider() {
             val badgeText = if (split >= 0) rating.substring(split + marker.length).trim() else ""
             val left = w * .045f
             val metaSize = w * .0112f
-            val metaBaseline = h * .325f
+            val metaBaseline = h * .285f
             val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 textSize = metaSize
@@ -228,29 +228,29 @@ class PosterCacheProvider : ContentProvider() {
             if (measured > maxGenreWidth && measured > 0f) {
                 genrePaint.textSize *= maxGenreWidth / measured
             }
-            canvas.drawText(genres, left, h * .36f, genreOutline)
-            canvas.drawText(genres, left, h * .36f, genrePaint)
+            canvas.drawText(genres, left, h * .325f, genreOutline)
+            canvas.drawText(genres, left, h * .325f, genrePaint)
         }
         if (overview.isNotBlank()) {
             val left = w * .045f
             val descriptionPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                 color = Color.WHITE
-                textSize = w * .0084f
-                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                textSize = w * .0092f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setShadowLayer(w * .0028f, 0f, 1f, Color.BLACK)
             }
-            val maxDescriptionWidth = (w * .40f).toInt().coerceAtLeast(1)
+            val maxDescriptionWidth = (w * .39f).toInt().coerceAtLeast(1)
             val direction = if (descriptionLanguage.equals("ar", true)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
             val layout = StaticLayout.Builder.obtain(overview.replace(Regex("\\s+"), " ").trim(), 0, overview.replace(Regex("\\s+"), " ").trim().length, descriptionPaint, maxDescriptionWidth)
                 .setAlignment(if (descriptionLanguage.equals("ar", true)) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_NORMAL)
                 .setTextDirection(direction)
                 .setIncludePad(false)
-                .setMaxLines(3)
+                .setMaxLines(4)
                 .setEllipsize(android.text.TextUtils.TruncateAt.END)
                 .setLineSpacing(w * .0015f, 1.0f)
                 .build()
             canvas.save()
-            canvas.translate(left, h * .395f)
+            canvas.translate(left, h * .355f)
             layout.draw(canvas)
             canvas.restore()
         }
@@ -336,7 +336,7 @@ class PosterCacheProvider : ContentProvider() {
         fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null, platformName: String? = null, overview: String? = null, descriptionLanguage: String = "en"): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && overview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v33-description-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${overview.orEmpty()}"
+            val descriptor = "hero-v34-description-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${overview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
