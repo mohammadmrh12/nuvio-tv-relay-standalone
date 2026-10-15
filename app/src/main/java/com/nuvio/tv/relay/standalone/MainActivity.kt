@@ -294,7 +294,7 @@ class MainActivity : Activity() {
         // Main actions first; render() appends the live catalog checkboxes so D-pad
         // can continue into the catalog library instead of getting trapped at Save.
         focusChain.clear()
-        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, reshapedTargetButton, legacyTargetButton) + (0 until descriptionLanguageRow.childCount).map { descriptionLanguageRow.getChildAt(it) } + listOfNotNull(synopsisToggle, tmdbTokenInput, saveTmdbButton))
+        focusChain.addAll((listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, reshapedTargetButton, legacyTargetButton) + (0 until descriptionLanguageRow.childCount).map { descriptionLanguageRow.getChildAt(it) } + listOfNotNull(synopsisToggle, tmdbTokenInput, saveTmdbButton)).map { it as View })
         configureFocusChain()
         connectButton.nextFocusDownId = manualSyncButton?.id ?: connectButton.id
         catalogPanel = LinearLayout(this).apply {
