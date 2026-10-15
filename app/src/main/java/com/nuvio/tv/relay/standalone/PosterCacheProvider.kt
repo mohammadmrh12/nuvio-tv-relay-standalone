@@ -229,8 +229,8 @@ class PosterCacheProvider : ContentProvider() {
                 genrePaint.textSize *= maxGenreWidth / measured
             }
             genreOutline.textSize = genrePaint.textSize
-            canvas.drawText(genres, left, h * .35f, genreOutline)
-            canvas.drawText(genres, left, h * .35f, genrePaint)
+            canvas.drawText(genres, left, h * .355f, genreOutline)
+            canvas.drawText(genres, left, h * .355f, genrePaint)
         }
         if (overview.isNotBlank()) {
             val left = w * .045f

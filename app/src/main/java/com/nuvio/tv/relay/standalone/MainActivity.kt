@@ -841,7 +841,14 @@ class MainActivity : Activity() {
         }
         collectGenres(cached?.optJSONArray("genres"))
         if (genreNames.isEmpty()) collectGenres(m.optJSONArray("genres"))
-        val details = mutableListOf(if (isSeries) "Series" else "Movie")
+        // Genre/type follow the selected metadata language, but Arabic synopsis keeps metadata English.
+        val metadataLanguage = prefs.getString("description_language", "en") ?: "en"
+        val typeLabel = when (metadataLanguage) {
+            "fr" -> if (isSeries) "Série" else "Film"
+            "de" -> if (isSeries) "Serie" else "Film"
+            else -> if (isSeries) "Series" else "Movie"
+        }
+        val details = mutableListOf(typeLabel)
         details.addAll(genreNames)
         val badge = listOfNotNull(rating?.let { "★ $it" }, year).joinToString("  ·  ")
         return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""

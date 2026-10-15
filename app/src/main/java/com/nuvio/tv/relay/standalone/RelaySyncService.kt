@@ -478,7 +478,13 @@ class RelaySyncService : Service() {
                 if (score in 0.0..10.0) result.put("vote_average", score)
                 val date = if (isTv) chosen.optString("first_air_date") else chosen.optString("release_date")
                 if (date.matches(Regex("(19|20)\\d{2}.*"))) result.put("year", date.take(4))
-                val genres = chosen.optJSONArray("genres")
+                // Arabic synopsis must not force Arabic genre labels: fetch English genres separately.
+                val genreSource = if (descriptionLanguage == "ar" && contentId > 0) {
+                    runCatching {
+                        tmdbGet("https://api.themoviedb.org/3/$endpoint/$contentId?language=en-US", token)
+                    }.getOrNull() ?: chosen
+                } else chosen
+                val genres = genreSource.optJSONArray("genres")
                 if (genres != null) {
                     val names = org.json.JSONArray()
                     for (i in 0 until minOf(2, genres.length())) {
@@ -570,8 +576,15 @@ class RelaySyncService : Service() {
         }
         collectGenres(m)
         collectGenres(fallback)
+        val isSeries = type.equals("series", true) || type.equals("tv", true) || type.equals("show", true)
+        val metadataLanguage = descriptionLanguage()
+        val typeLabel = when (metadataLanguage) {
+            "fr" -> if (isSeries) "Série" else "Film"
+            "de" -> if (isSeries) "Serie" else "Film"
+            else -> if (isSeries) "Series" else "Movie"
+        }
         val details = mutableListOf<String>()
-        details.add(if (type.equals("series", true) || type.equals("tv", true) || type.equals("show", true)) "Series" else "Movie")
+        details.add(typeLabel)
         details.addAll(genres)
         val badge = listOfNotNull(score?.let { "★ $it" }, year).joinToString("  ·  ")
         return details.joinToString("  ·  ") + if (badge.isNotBlank()) " ||| $badge" else ""
