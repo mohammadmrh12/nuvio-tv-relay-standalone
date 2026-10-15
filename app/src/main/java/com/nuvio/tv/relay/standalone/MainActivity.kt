@@ -149,24 +149,21 @@ class MainActivity : Activity() {
             gravity = android.view.Gravity.START
         }
         val descriptionLanguageStatus = label("", 12, Color.rgb(153, 170, 192))
+        val languageNames = mapOf("ar" to "العربية", "en" to "English", "fr" to "Français", "de" to "Deutsch")
         fun updateDescriptionLanguageButtons() {
             val current = prefs.getString("description_language", "en") ?: "en"
-            descriptionLanguageStatus.text = "Selected: " + if (current == "ar") "العربية" else "English"
+            descriptionLanguageStatus.text = "Selected: " + (languageNames[current] ?: "English")
         }
-        val arabicDescriptionButton = button("العربية", parent = descriptionLanguageRow, action = {
-            prefs.edit().putString("description_language", "ar").apply()
+        fun languageButton(code: String, name: String) = button(name, parent = descriptionLanguageRow, action = {
+            prefs.edit().putString("description_language", code).apply()
             updateDescriptionLanguageButtons()
-            Toast.makeText(this, "Description language: Arabic. Syncing…", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Description language: $name. Syncing…", Toast.LENGTH_SHORT).show()
             runManualSync()
         })
-        val englishDescriptionButton = button("English", parent = descriptionLanguageRow, action = {
-            prefs.edit().putString("description_language", "en").apply()
-            updateDescriptionLanguageButtons()
-            Toast.makeText(this, "Description language: English. Syncing…", Toast.LENGTH_SHORT).show()
-            runManualSync()
-        })
-        (arabicDescriptionButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(8) }
-        (englishDescriptionButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f }
+        listOf("ar" to "العربية", "en" to "English", "fr" to "Français", "de" to "Deutsch").forEach { (code, name) ->
+            val b = languageButton(code, name)
+            (b.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(6) }
+        }
         controls.addView(descriptionLanguageRow)
         controls.addView(descriptionLanguageStatus)
         updateDescriptionLanguageButtons()
@@ -297,7 +294,7 @@ class MainActivity : Activity() {
         // Main actions first; render() appends the live catalog checkboxes so D-pad
         // can continue into the catalog library instead of getting trapped at Save.
         focusChain.clear()
-        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, reshapedTargetButton, legacyTargetButton, arabicDescriptionButton, englishDescriptionButton, synopsisToggle, tmdbTokenInput, saveTmdbButton))
+        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, reshapedTargetButton, legacyTargetButton) + (0 until descriptionLanguageRow.childCount).map { descriptionLanguageRow.getChildAt(it) } + listOfNotNull(synopsisToggle, tmdbTokenInput, saveTmdbButton))
         configureFocusChain()
         connectButton.nextFocusDownId = manualSyncButton?.id ?: connectButton.id
         catalogPanel = LinearLayout(this).apply {

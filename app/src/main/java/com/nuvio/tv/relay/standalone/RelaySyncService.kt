@@ -303,8 +303,10 @@ class RelaySyncService : Service() {
         return merged
     }
 
-    private fun descriptionLanguage(): String =
-        if (getSharedPreferences("relay", MODE_PRIVATE).getString("description_language", "en") == "ar") "ar" else "en"
+    private fun descriptionLanguage(): String = when (getSharedPreferences("relay", MODE_PRIVATE).getString("description_language", "en")) {
+        "ar", "fr", "de" -> getSharedPreferences("relay", MODE_PRIVATE).getString("description_language", "en")!!
+        else -> "en"
+    }
 
     private fun normalizedTitle(value: String): String =
         value.lowercase(java.util.Locale.ROOT)
@@ -336,9 +338,9 @@ class RelaySyncService : Service() {
             .firstOrNull { it.matches(Regex("\\d{1,10}")) && (it.toIntOrNull() ?: 0) > 0 }.orEmpty()
         val cacheDir = File(cacheDir, "tmdb-cache").apply { mkdirs() }
         val descriptionLanguage = descriptionLanguage()
-        val tmdbLanguage = if (descriptionLanguage == "ar") "ar-SA" else "en-US"
-        val fallbackLanguage = if (descriptionLanguage == "ar") "en-US" else "ar-SA"
-        val keyInput = "provider-icons-v3-synopsis-$descriptionLanguage|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
+        val tmdbLanguage = when (descriptionLanguage) { "ar" -> "ar-SA"; "fr" -> "fr-FR"; "de" -> "de-DE"; else -> "en-US" }
+        val fallbackLanguage = when (descriptionLanguage) { "ar" -> "en-US"; "fr" -> "en-US"; "de" -> "en-US"; else -> "fr-FR" }
+        val keyInput = "provider-icons-v4-synopsis-$descriptionLanguage|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
         val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
         val file = File(cacheDir, "$key.json")
         if (file.exists()) {
