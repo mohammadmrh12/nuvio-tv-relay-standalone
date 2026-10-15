@@ -176,14 +176,15 @@ class MainActivity : Activity() {
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
             setTextColor(Color.WHITE)
             buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(65, 190, 255))
-            isChecked = prefs.getBoolean("synopsis_enabled", true)
             isFocusable = true
+            isFocusableInTouchMode = true
             setPadding(0, dp(8), dp(8), dp(8))
             setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean("synopsis_enabled", checked).apply()
+                prefs.edit().putBoolean("synopsis_enabled", checked).commit()
                 Toast.makeText(this@MainActivity, if (checked) "Synopsis enabled. Syncing…" else "Synopsis disabled. Syncing…", Toast.LENGTH_SHORT).show()
                 runManualSync()
             }
+            isChecked = prefs.getBoolean("synopsis_enabled", true)
         }
         controls.addView(synopsisToggle)
         controls.addView(label("TMDB ENRICHMENT", 13, Color.rgb(94, 190, 255), true))
@@ -459,6 +460,7 @@ class MainActivity : Activity() {
                 setPadding(0, dp(2), 0, dp(2))
             }
             val cb = CheckBox(this).apply {
+                tag = "catalog-checkbox"
                 text = c.name
                 textSize = 17f
                 typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
@@ -488,7 +490,7 @@ class MainActivity : Activity() {
                 bottomMargin = (12 * resources.displayMetrics.density).toInt()
             })
         }
-        focusChain.removeAll { it is CheckBox }
+        focusChain.removeAll { it is CheckBox && it.tag == "catalog-checkbox" }
         focusChain.addAll(catalogFocusViews)
         configureFocusChain()
     }
