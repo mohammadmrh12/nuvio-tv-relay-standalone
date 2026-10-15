@@ -103,7 +103,7 @@ class PosterCacheProvider : ContentProvider() {
                 .replace(Regex("\\s+"), " ").trim()
             val badgeText = if (split >= 0) rating.substring(split + marker.length).trim() else ""
             val left = w * .045f
-            val metaSize = w * .0112f
+            val metaSize = w * .0092f
             val metaBaseline = h * .325f
             val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
@@ -119,7 +119,7 @@ class PosterCacheProvider : ContentProvider() {
                 val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
                     style = Paint.Style.STROKE
-                    strokeWidth = w * .00145f
+                    strokeWidth = metaSize * .10f
                     setShadowLayer(w * .002f, 0f, 1f, Color.BLACK)
                 }
                 val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -143,7 +143,7 @@ class PosterCacheProvider : ContentProvider() {
                         val dividerX = metadataX + metaSize * .42f
                         val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                             color = Color.WHITE
-                            strokeWidth = w * .0013f
+                            strokeWidth = metaSize * .09f
                             setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK)
                         }
                         canvas.drawLine(dividerX, badgeTop - metaSize * .04f, dividerX, badgeBottom + metaSize * .04f, dividerPaint)
@@ -183,7 +183,7 @@ class PosterCacheProvider : ContentProvider() {
                 val providerOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
                     style = Paint.Style.STROKE
-                    strokeWidth = w * .00145f
+                    strokeWidth = metaSize * .10f
                     setShadowLayer(w * .002f, 0f, 1f, Color.BLACK)
                 }
                 val badgePadX = metaSize * .34f
@@ -199,7 +199,7 @@ class PosterCacheProvider : ContentProvider() {
                 )
                 val separatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.WHITE
-                    strokeWidth = w * .0013f
+                    strokeWidth = metaSize * .09f
                     setShadowLayer(w * .0015f, 0f, 1f, Color.BLACK)
                 }
                 canvas.drawLine(separatorX, providerRect.top - metaSize * .04f, separatorX, providerRect.bottom + metaSize * .04f, separatorPaint)
@@ -212,7 +212,7 @@ class PosterCacheProvider : ContentProvider() {
                 textSize = metaSize * .90f
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 style = Paint.Style.STROKE
-                strokeWidth = w * .0011f
+                strokeWidth = metaSize * .08f
                 strokeJoin = Paint.Join.ROUND
             }
             val genrePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
@@ -223,7 +223,7 @@ class PosterCacheProvider : ContentProvider() {
                 isSubpixelText = true
                 setShadowLayer(w * .0032f, 0f, 1f, Color.BLACK)
             }
-            val maxGenreWidth = w * .39f
+            val maxGenreWidth = w * .42f
             val measured = genrePaint.measureText(genres)
             if (measured > maxGenreWidth && measured > 0f) {
                 genrePaint.textSize *= maxGenreWidth / measured
@@ -241,13 +241,13 @@ class PosterCacheProvider : ContentProvider() {
             }
             // Fixed invisible text box: content may wrap or ellipsize, but can never
             // escape horizontally or vertically into the character/artwork area.
-            val boxTop = h * .355f
-            val boxWidth = (w * .405f).toInt().coerceAtLeast(1)
-            val boxHeight = (h * .125f).toInt().coerceAtLeast(1)
+            val boxTop = h * .395f
+            val boxWidth = (w * .42f).toInt().coerceAtLeast(1)
+            val boxHeight = (h * .155f).toInt().coerceAtLeast(1)
             val normalizedOverview = overview.replace(Regex("\\s+"), " ").trim()
             val direction = if (descriptionLanguage.equals("ar", true)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
             // Scale font to the actual artwork dimensions (bitmap width can vary by source).
-            descriptionPaint.textSize = (w * .0078f).coerceAtLeast(12f)
+            descriptionPaint.textSize = (w * .0105f).coerceAtLeast(18f)
             val layout = StaticLayout.Builder.obtain(normalizedOverview, 0, normalizedOverview.length, descriptionPaint, boxWidth)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .setTextDirection(direction)
@@ -347,7 +347,7 @@ class PosterCacheProvider : ContentProvider() {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
             val effectiveOverview = if (context.getSharedPreferences("relay", android.content.Context.MODE_PRIVATE).getBoolean("synopsis_enabled", true)) overview else null
             if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && effectiveOverview.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v39-strict-clip-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
+            val descriptor = "hero-v40-balanced-metadata-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${effectiveOverview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
