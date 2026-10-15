@@ -115,6 +115,33 @@ class MainActivity : Activity() {
             if (rotationOn) Color.rgb(105, 211, 176) else Color.rgb(153, 170, 192))
         rotationButton = button(rotationCaption(), action = { toggleRotation(); updateRotationControl("Rotation " + if (rotationOn) "enabled" else "disabled") })
         controls.addView(rotationState)
+        controls.addView(label("OPEN TITLES IN", 13, Color.rgb(94, 190, 255), true))
+        controls.addView(label("Choose which Nuvio app opens when you press Play on a Relay title in the launcher.", 13, Color.rgb(153, 170, 192)))
+        val targetStatus = label("", 12, Color.rgb(153, 170, 192))
+        val targetRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.START
+        }
+        fun refreshTargetStatus() {
+            targetStatus.text = "Selected: " + if (NuvioTarget.target(this) == NuvioTarget.LEGACY) "Nuvio Legacy" else "Nuvio Re-Shaped"
+        }
+        val reshapedTargetButton = button("Nuvio Re-Shaped", action = {
+            prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.RESHAPED).apply()
+            refreshTargetStatus()
+            Toast.makeText(this, "Play target set to Nuvio Re-Shaped", Toast.LENGTH_SHORT).show()
+            runManualSync()
+        })
+        val legacyTargetButton = button("Nuvio Legacy", action = {
+            prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.LEGACY).apply()
+            refreshTargetStatus()
+            Toast.makeText(this, "Play target set to Nuvio Legacy", Toast.LENGTH_SHORT).show()
+            runManualSync()
+        })
+        targetRow.addView(reshapedTargetButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
+        targetRow.addView(legacyTargetButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controls.addView(targetRow)
+        controls.addView(targetStatus)
+        refreshTargetStatus()
         controls.addView(label("DESCRIPTION LANGUAGE", 13, Color.rgb(94, 190, 255), true))
         controls.addView(label("Choose the language used for the synopsis under the metadata in the Relay artwork.", 13, Color.rgb(153, 170, 192)))
         val descriptionLanguageRow = LinearLayout(this).apply {
@@ -256,7 +283,7 @@ class MainActivity : Activity() {
         // Main actions first; render() appends the live catalog checkboxes so D-pad
         // can continue into the catalog library instead of getting trapped at Save.
         focusChain.clear()
-        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, arabicDescriptionButton, englishDescriptionButton, tmdbTokenInput, saveTmdbButton))
+        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, reshapedTargetButton, legacyTargetButton, arabicDescriptionButton, englishDescriptionButton, tmdbTokenInput, saveTmdbButton))
         configureFocusChain()
         connectButton.nextFocusDownId = manualSyncButton?.id ?: connectButton.id
         catalogPanel = LinearLayout(this).apply {
@@ -664,13 +691,8 @@ class MainActivity : Activity() {
     private fun publish(item: Item, pinnedFirst: Boolean = false): Boolean {
         val programType = if (item.type.equals("movie", true)) TvContractCompat.WatchNextPrograms.TYPE_MOVIE else TvContractCompat.WatchNextPrograms.TYPE_TV_EPISODE
         val internalId = if (pinnedFirst) pinnedNativeInternalId else relayId(item)
-        val uri = Uri.Builder().scheme("nuvio").authority("meta")
-            .appendQueryParameter("type", item.type.lowercase()).appendQueryParameter("id", item.id).build()
-        // Force a fresh Nuvio task for each launcher selection; otherwise an already-open
-        // MainActivity can keep displaying the previous movie and ignore the new deep link.
-        val target = Intent(Intent.ACTION_VIEW, uri)
-            .setPackage("com.nuvioreshaped.tv")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        // Store the chosen Nuvio package and compatible deep link in the launcher row.
+        val target = NuvioTarget.intent(this, item.type, item.id)
         val launcherIntentUri = Uri.parse(target.toUri(Intent.URI_INTENT_SCHEME))
         val builder = WatchNextProgram.Builder()
             .setType(programType)

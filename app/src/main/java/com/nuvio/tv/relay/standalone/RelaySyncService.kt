@@ -201,12 +201,8 @@ class RelaySyncService : Service() {
     }
     private fun publish(m: JSONObject, pinnedFirst: Boolean = false, topOfCatalog: Boolean = false) {
         val type = m.optString("type"); val id = m.optString("id")
-        val uri = Uri.Builder().scheme("nuvio").authority("meta").appendQueryParameter("type", type.lowercase()).appendQueryParameter("id", id).build()
-        // Clear any existing Nuvio task so a second Continue Watching selection refreshes
-        // the destination instead of leaving the first movie detail screen alive.
-        val target = Intent(Intent.ACTION_VIEW, uri)
-            .setPackage("com.nuvioreshaped.tv")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        // Honor the target chosen in Relay settings for every published launcher card.
+        val target = NuvioTarget.intent(this, type, id)
         val launcherIntentUri = Uri.parse(target.toUri(Intent.URI_INTENT_SCHEME))
         val builder = WatchNextProgram.Builder()
             .setType(if (type.equals("movie", true)) TvContractCompat.WatchNextPrograms.TYPE_MOVIE else TvContractCompat.WatchNextPrograms.TYPE_TV_EPISODE)
