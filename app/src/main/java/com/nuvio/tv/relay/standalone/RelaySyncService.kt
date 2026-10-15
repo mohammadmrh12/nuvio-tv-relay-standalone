@@ -133,7 +133,11 @@ class RelaySyncService : Service() {
                 val sourcePoster = firstHttp(m.optString("poster"), m.optString("poster_url"), m.optString("posterUrl"))
                 val sourceBackground = firstHttp(m.optString("background"), m.optString("backdrop"), m.optString("backdropUrl"), sourcePoster)
                 val sourceLogo = firstHttp(m.optString("logo"), m.optString("logo_url"), m.optString("logoUrl"))
-                val enriched = enrichFromTmdb(m, mt, allowFetch = tmdbBatchPosition < tmdbBatchSize) { updated ->
+                val sourceOverview = sequenceOf("overview", "description", "plot", "synopsis", "summary")
+                    .map { m.optString(it).trim() }.firstOrNull { it.isNotBlank() }.orEmpty()
+                // Prioritize titles missing synopsis even when they fall outside this visit's regular batch.
+                val missingSynopsis = sourceOverview.isBlank()
+                val enriched = enrichFromTmdb(m, mt, allowFetch = tmdbBatchPosition < tmdbBatchSize || missingSynopsis) { updated ->
                     // TMDB responds asynchronously; republish this exact item with its fresh metadata,
                     // rather than waiting for a future catalog rotation to refresh the launcher artwork.
                     val updatedItem = JSONObject().put("id", mid).put("type", mt).put("name", sourceName)
@@ -334,7 +338,7 @@ class RelaySyncService : Service() {
         val descriptionLanguage = descriptionLanguage()
         val tmdbLanguage = if (descriptionLanguage == "ar") "ar-SA" else "en-US"
         val fallbackLanguage = if (descriptionLanguage == "ar") "en-US" else "ar-SA"
-        val keyInput = "provider-icons-v2-$descriptionLanguage|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
+        val keyInput = "provider-icons-v3-synopsis-$descriptionLanguage|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
         val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
         val file = File(cacheDir, "$key.json")
         if (file.exists()) {
@@ -349,7 +353,8 @@ class RelaySyncService : Service() {
                     if (cached.optBoolean("_no_match")) return source
                     // Older positive cache entries predate watch-provider metadata. Refresh them
                     // asynchronously instead of hiding platform logos for the full cache lifetime.
-                    if (cached.has("platformLogo") || !allowFetch) return mergeTmdb(source, cached)
+                    val cachedOverviewMissing = cached.optString("overview").isBlank()
+                    if ((cached.has("platformLogo") && !(allowFetch && cachedOverviewMissing)) || !allowFetch) return mergeTmdb(source, cached)
                 } catch (_: Exception) { }
             }
         }

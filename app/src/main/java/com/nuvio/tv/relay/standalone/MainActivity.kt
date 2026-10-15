@@ -677,7 +677,7 @@ class MainActivity : Activity() {
                             c.platformLogo,
                             firstHttp(cached?.optString("titleLogo"), m.optString("logo")),
                             ratingLabel(m, cached),
-                            firstHttp(cached?.optString("overview"), m.optString("overview")).orEmpty())
+                            sequenceOf(cached?.optString("overview"), m.optString("overview"), m.optString("description"), m.optString("plot"), m.optString("synopsis"), m.optString("summary")).map { it?.trim().orEmpty() }.firstOrNull { it.isNotBlank() }.orEmpty())
                         all.putIfAbsent(type.lowercase() + ":" + id, item)
                     }
                 }
