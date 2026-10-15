@@ -11,6 +11,10 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.TextDirectionHeuristics
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.io.File
@@ -55,6 +59,8 @@ class PosterCacheProvider : ContentProvider() {
         val rating = uri.getQueryParameter("rating").orEmpty().trim()
         val platformUrl = uri.getQueryParameter("platform")
         val platformName = uri.getQueryParameter("platformName").orEmpty().trim()
+        val overview = uri.getQueryParameter("overview").orEmpty().trim()
+        val descriptionLanguage = uri.getQueryParameter("descriptionLanguage").orEmpty().ifBlank { "en" }
         val bg = decodeUrl(bgUrl, maxWidth = 1920, maxHeight = 1080) ?: throw java.io.FileNotFoundException("Hero background could not be decoded")
         // Render overlays at a consistent high resolution even when the supplied backdrop is small.
         // Keep the source aspect ratio and upscale only the canvas, not the source's actual detail.
@@ -225,6 +231,29 @@ class PosterCacheProvider : ContentProvider() {
             canvas.drawText(genres, left, h * .36f, genreOutline)
             canvas.drawText(genres, left, h * .36f, genrePaint)
         }
+        if (overview.isNotBlank()) {
+            val left = w * .045f
+            val descriptionPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+                color = Color.WHITE
+                textSize = w * .0084f
+                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                setShadowLayer(w * .0028f, 0f, 1f, Color.BLACK)
+            }
+            val maxDescriptionWidth = (w * .40f).toInt().coerceAtLeast(1)
+            val direction = if (descriptionLanguage.equals("ar", true)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
+            val layout = StaticLayout.Builder.obtain(overview.replace(Regex("\\s+"), " ").trim(), 0, overview.replace(Regex("\\s+"), " ").trim().length, descriptionPaint, maxDescriptionWidth)
+                .setAlignment(if (descriptionLanguage.equals("ar", true)) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_NORMAL)
+                .setTextDirection(direction)
+                .setIncludePad(false)
+                .setMaxLines(3)
+                .setEllipsize(android.text.TextUtils.TruncateAt.END)
+                .setLineSpacing(w * .0015f, 1.0f)
+                .build()
+            canvas.save()
+            canvas.translate(left, h * .395f)
+            layout.draw(canvas)
+            canvas.restore()
+        }
         val temp = File(target.parentFile, target.nameWithoutExtension + ".tmp")
         FileOutputStream(temp).use { out.compress(Bitmap.CompressFormat.JPEG, 98, it) }
         if (!temp.renameTo(target)) { temp.copyTo(target, overwrite = true); temp.delete() }
@@ -304,16 +333,18 @@ class PosterCacheProvider : ContentProvider() {
                 .buildUpon().appendQueryParameter("url", raw).build()
         }
 
-        fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null, platformName: String? = null): Uri? {
+        fun heroUriFor(context: android.content.Context, background: String?, logo: String?, rating: String?, platform: String? = null, platformName: String? = null, overview: String? = null, descriptionLanguage: String = "en"): Uri? {
             if (background.isNullOrBlank() || !background.startsWith("http")) return null
-            if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank()) return uriFor(context, background)
-            val descriptor = "hero-v31-provider-gap-only|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}"
+            if (logo.isNullOrBlank() && rating.isNullOrBlank() && platform.isNullOrBlank() && overview.isNullOrBlank()) return uriFor(context, background)
+            val descriptor = "hero-v32-description-$descriptionLanguage|$background|${logo.orEmpty()}|${rating.orEmpty()}|${platform.orEmpty()}|${platformName.orEmpty()}|${overview.orEmpty()}"
             return Uri.parse("content://com.nuvio.tv.relay.standalone.poster-cache/hero/${sha256(descriptor)}")
                 .buildUpon().appendQueryParameter("kind", "hero").appendQueryParameter("background", background)
                 .apply { if (!logo.isNullOrBlank() && logo.startsWith("http")) appendQueryParameter("logo", logo) }
                 .apply { if (!rating.isNullOrBlank()) appendQueryParameter("rating", rating) }
                 .apply { if (!platform.isNullOrBlank() && (platform.startsWith("https://image.tmdb.org/") || platform.startsWith("asset:"))) appendQueryParameter("platform", platform) }
-                .apply { if (!platformName.isNullOrBlank()) appendQueryParameter("platformName", platformName) }.build()
+                .apply { if (!platformName.isNullOrBlank()) appendQueryParameter("platformName", platformName) }
+                .apply { if (!overview.isNullOrBlank()) appendQueryParameter("overview", overview) }
+                .appendQueryParameter("descriptionLanguage", descriptionLanguage).build()
         }
 
         private fun sha256(value: String) =

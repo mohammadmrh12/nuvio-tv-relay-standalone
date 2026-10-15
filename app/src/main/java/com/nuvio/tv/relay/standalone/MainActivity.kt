@@ -115,6 +115,34 @@ class MainActivity : Activity() {
             if (rotationOn) Color.rgb(105, 211, 176) else Color.rgb(153, 170, 192))
         rotationButton = button(rotationCaption(), action = { toggleRotation(); updateRotationControl("Rotation " + if (rotationOn) "enabled" else "disabled") })
         controls.addView(rotationState)
+        controls.addView(label("DESCRIPTION LANGUAGE", 13, Color.rgb(94, 190, 255), true))
+        controls.addView(label("Choose the language used for the synopsis under the metadata in the Relay artwork.", 13, Color.rgb(153, 170, 192)))
+        val descriptionLanguageRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.START
+        }
+        val descriptionLanguageStatus = label("", 12, Color.rgb(153, 170, 192))
+        fun updateDescriptionLanguageButtons() {
+            val current = prefs.getString("description_language", "en") ?: "en"
+            descriptionLanguageStatus.text = "Selected: " + if (current == "ar") "العربية" else "English"
+        }
+        val arabicDescriptionButton = button("العربية", action = {
+            prefs.edit().putString("description_language", "ar").apply()
+            updateDescriptionLanguageButtons()
+            Toast.makeText(this, "Description language: Arabic. Syncing…", Toast.LENGTH_SHORT).show()
+            runManualSync()
+        })
+        val englishDescriptionButton = button("English", action = {
+            prefs.edit().putString("description_language", "en").apply()
+            updateDescriptionLanguageButtons()
+            Toast.makeText(this, "Description language: English. Syncing…", Toast.LENGTH_SHORT).show()
+            runManualSync()
+        })
+        descriptionLanguageRow.addView(arabicDescriptionButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
+        descriptionLanguageRow.addView(englishDescriptionButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controls.addView(descriptionLanguageRow)
+        controls.addView(descriptionLanguageStatus)
+        updateDescriptionLanguageButtons()
         controls.addView(label("TMDB ENRICHMENT", 13, Color.rgb(94, 190, 255), true))
         controls.addView(label("Add a TMDB API Read Access Token to enrich missing posters, backdrops, logos, ratings and release years. The token is stored locally on this device.", 13, Color.rgb(153, 170, 192)))
         val tmdbTokenInput = EditText(this).apply {
@@ -228,7 +256,7 @@ class MainActivity : Activity() {
         // Main actions first; render() appends the live catalog checkboxes so D-pad
         // can continue into the catalog library instead of getting trapped at Save.
         focusChain.clear()
-        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, tmdbTokenInput, saveTmdbButton))
+        focusChain.addAll(listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, arabicDescriptionButton, englishDescriptionButton, tmdbTokenInput, saveTmdbButton))
         configureFocusChain()
         connectButton.nextFocusDownId = manualSyncButton?.id ?: connectButton.id
         catalogPanel = LinearLayout(this).apply {

@@ -142,6 +142,7 @@ class RelaySyncService : Service() {
                         .put("platformLogo", firstHttp(updated.optString("platformLogo")))
                         .put("platformIcon", updated.optString("platformIcon"))
                         .put("platformName", updated.optString("platformName"))
+                        .put("overview", updated.optString("overview"))
                         .put("titleLogo", firstHttp(updated.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                         .put("rating", ratingAndYear(updated, mt, m))
                     handler.post {
@@ -156,6 +157,7 @@ class RelaySyncService : Service() {
                     .put("platformLogo", firstHttp(enriched.optString("platformLogo")))
                     .put("platformIcon", enriched.optString("platformIcon"))
                     .put("platformName", enriched.optString("platformName"))
+                    .put("overview", enriched.optString("overview"))
                     .put("titleLogo", firstHttp(enriched.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                     .put("rating", ratingAndYear(enriched, mt, m)))
             }
@@ -178,7 +180,7 @@ class RelaySyncService : Service() {
                                     item.optString("rating"),
                                     item.optString("platformIcon").takeIf { it.startsWith("asset:") }
                                         ?: highestResolutionImage(item.optString("platformLogo")),
-                                    item.optString("platformName")
+                                    item.optString("platformName"), item.optString("overview"), descriptionLanguage()
                                 )
                                 if (art != null) contentResolver.openFileDescriptor(art, "r")?.use { }
                             }
@@ -301,6 +303,9 @@ class RelaySyncService : Service() {
         return merged
     }
 
+    private fun descriptionLanguage(): String =
+        if (getSharedPreferences("relay", MODE_PRIVATE).getString("description_language", "en") == "ar") "ar" else "en"
+
     private fun normalizedTitle(value: String): String =
         value.lowercase(java.util.Locale.ROOT)
             .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
@@ -330,7 +335,10 @@ class RelaySyncService : Service() {
             .map { source.optString(it).trim().removePrefix("tmdb:").removePrefix("tmdb_") }
             .firstOrNull { it.matches(Regex("\\d{1,10}")) && (it.toIntOrNull() ?: 0) > 0 }.orEmpty()
         val cacheDir = File(cacheDir, "tmdb-cache").apply { mkdirs() }
-        val keyInput = "provider-icons-v1|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
+        val descriptionLanguage = descriptionLanguage()
+        val tmdbLanguage = if (descriptionLanguage == "ar") "ar-SA" else "en-US"
+        val fallbackLanguage = if (descriptionLanguage == "ar") "en-US" else "ar-SA"
+        val keyInput = "provider-icons-v2-$descriptionLanguage|${type.lowercase(java.util.Locale.ROOT)}|${normalizedTitle(title)}|$year|$imdbId|$explicitTmdbId"
         val key = MessageDigest.getInstance("SHA-256").digest(keyInput.toByteArray()).joinToString("") { "%02x".format(it) }
         val file = File(cacheDir, "$key.json")
         if (file.exists()) {
@@ -358,18 +366,18 @@ class RelaySyncService : Service() {
 
                 // Prefer exact TMDB IDs, then exact IMDb IDs. Never trust a title-only top result.
                 if (explicitTmdbId.isNotBlank()) {
-                    details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$explicitTmdbId?append_to_response=images&include_image_language=en,null", token)
+                    details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$explicitTmdbId?language=$tmdbLanguage&append_to_response=images&include_image_language=en,null", token)
                     match = details
                 } else if (imdbId.isNotBlank()) {
                     val found = tmdbGet("https://api.themoviedb.org/3/find/$imdbId?external_source=imdb_id", token)
                     val results = found.optJSONArray(if (isTv) "tv_results" else "movie_results")
                     match = results?.optJSONObject(0)
                     val exactId = match?.optInt("id", 0) ?: 0
-                    if (exactId > 0) details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$exactId?append_to_response=images&include_image_language=en,null", token)
+                    if (exactId > 0) details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$exactId?language=$tmdbLanguage&append_to_response=images&include_image_language=en,null", token)
                 } else {
                     val query = URLEncoder.encode(title, "UTF-8")
                     val yearParam = if (year.isNotBlank()) (if (isTv) "&first_air_date_year=$year" else "&year=$year") else ""
-                    val search = tmdbGet("https://api.themoviedb.org/3/search/$endpoint?query=$query$yearParam&include_adult=false", token)
+                    val search = tmdbGet("https://api.themoviedb.org/3/search/$endpoint?query=$query$yearParam&language=$tmdbLanguage&include_adult=false", token)
                     val results = search.optJSONArray("results")
                     if (results != null) {
                         val sourceTitle = normalizedTitle(title)
@@ -390,7 +398,7 @@ class RelaySyncService : Service() {
                         }
                     }
                     val matchedId = match?.optInt("id", 0) ?: 0
-                    if (matchedId > 0) details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$matchedId?append_to_response=images&include_image_language=en,null", token)
+                    if (matchedId > 0) details = tmdbGet("https://api.themoviedb.org/3/$endpoint/$matchedId?language=$tmdbLanguage&append_to_response=images&include_image_language=en,null", token)
                 }
 
                 val chosen = details ?: match
@@ -475,7 +483,14 @@ class RelaySyncService : Service() {
                     }
                     result.put("genres", names)
                 }
-                if (chosen.optString("overview").isNotBlank()) result.put("overview", chosen.optString("overview"))
+                var overview = chosen.optString("overview").trim()
+                if (overview.isBlank() && contentId > 0) {
+                    // If TMDB has no synopsis in the selected language, fall back to the other language.
+                    overview = runCatching {
+                        tmdbGet("https://api.themoviedb.org/3/$endpoint/$contentId?language=$fallbackLanguage", token).optString("overview").trim()
+                    }.getOrDefault("")
+                }
+                if (overview.isNotBlank()) result.put("overview", overview)
                 if (chosen.optInt("runtime", 0) > 0) result.put("runtime", chosen.optInt("runtime"))
                 if (chosen.optInt("number_of_seasons", 0) > 0) result.put("number_of_seasons", chosen.optInt("number_of_seasons"))
                 if (result.length() == 0) result.put("_no_match", true)
