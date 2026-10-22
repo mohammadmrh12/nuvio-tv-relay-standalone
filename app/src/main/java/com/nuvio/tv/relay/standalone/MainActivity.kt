@@ -79,6 +79,7 @@ class MainActivity : Activity() {
     private var phoneDialog: android.app.Dialog? = null
     private var phoneServer: PhoneAddonServer? = null
     private var phoneDialogStatus: TextView? = null
+    private var phoneAddButton: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,7 +105,7 @@ class MainActivity : Activity() {
         addPage(buildCatalogsPage())
         addPage(buildSettingsPage())
         addPage(buildUpdatesPage())
-        wireTabFocus(0, listOfNotNull(updateBanner, connectButtonRef, manualSyncButton))
+        rewireHomeFocus()
         wireTabFocus(1, listOfNotNull(selectAllButton, selectNoneButton))
         wireTabFocus(2, firstSettingsRow?.let { row -> (0 until row.childCount).map { row.getChildAt(it) } } ?: emptyList())
         wireTabFocus(3, listOfNotNull(updCheckButton, updInstallButton))
@@ -163,8 +164,9 @@ class MainActivity : Activity() {
             tab.addView(TextView(this).apply {
                 text = caption
                 textSize = 16f
+                maxLines = 1
                 typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-            })
+            }, LinearLayout.LayoutParams(-2, -2))
             tab.addView(View(this), LinearLayout.LayoutParams(dp(24), dp(3)).apply { topMargin = dp(6) })
             tab.setOnClickListener { showTab(index) }
             tab.setOnFocusChangeListener { _, focused -> if (focused) showTab(index) else styleTabs() }
@@ -194,6 +196,20 @@ class MainActivity : Activity() {
         firstControls.firstOrNull()?.let { tab.nextFocusDownId = it.id }
     }
 
+    /** Home's first row is the update banner when it is shown, otherwise the Connect / Add from phone / Sync now buttons. */
+    private fun rewireHomeFocus() {
+        val tab = tabViews.getOrNull(0) ?: return
+        val banner = updateBanner
+        val bannerShown = banner != null && banner.visibility == View.VISIBLE
+        val controls = listOfNotNull(connectButtonRef, phoneAddButton, manualSyncButton)
+        controls.forEach { if (it.id == View.NO_ID) it.id = View.generateViewId() }
+        val up = if (bannerShown && banner != null) banner.id else tab.id
+        controls.forEach { it.nextFocusUpId = up }
+        banner?.nextFocusUpId = tab.id
+        banner?.nextFocusDownId = connectButtonRef?.id ?: View.NO_ID
+        tab.nextFocusDownId = if (bannerShown && banner != null) banner.id else (connectButtonRef?.id ?: View.NO_ID)
+    }
+
     private fun showTab(index: Int) {
         currentTab = index
         pages.forEachIndexed { i, page -> page.visibility = if (i == index) View.VISIBLE else View.GONE }
@@ -208,6 +224,7 @@ class MainActivity : Activity() {
         val (scroll, col) = newPage()
         col.addView(label("Your Nuvio catalogs on the Google TV home screen.", 16, Ui.TEXT2).apply { setPadding(0, dp(4), 0, dp(18)) })
         val banner = TextView(this).apply {
+            id = View.generateViewId()
             textSize = 14f
             setTextColor(Ui.ON_ACCENT)
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
@@ -232,12 +249,14 @@ class MainActivity : Activity() {
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val connect = button("Connect", primary = true, action = { connectToNuvio() })
         connectButtonRef = connect
+        val phone = button("Add from phone", action = { showPhoneAddDialog() })
         val sync = button("Sync now", action = { runManualSync() })
         manualSyncButton = sync
+        phoneAddButton = phone
         actions.addView(connect, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(10) })
+        actions.addView(phone, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(10) })
         actions.addView(sync, LinearLayout.LayoutParams(0, -2, 1f))
         col.addView(actions)
-        col.addView(button("Add from phone", action = { showPhoneAddDialog() }), lp(-1, -2, top = 10))
         manualSyncState = label("Status: Ready", 12, Ui.TEXT3).apply { setPadding(dp(4), dp(8), 0, 0) }
         col.addView(manualSyncState)
         col.addView(sectionTitle("HOW TO CONNECT"))
@@ -359,8 +378,8 @@ class MainActivity : Activity() {
             setHintTextColor(Ui.TEXT3)
             setTextColor(Color.WHITE)
             textSize = 16f
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            setRawInputType(android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setRawInputType(android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
             setSingleLine(true)
             minHeight = dp(58)
@@ -531,6 +550,7 @@ class MainActivity : Activity() {
             visibility = if (release != null) View.VISIBLE else View.GONE
             text = if (release != null) "Update available: v" + release.version + "  ·  press to review" else ""
         }
+        rewireHomeFocus()
     }
 
     private fun checkForUpdatesNow() {
@@ -698,10 +718,10 @@ class MainActivity : Activity() {
             setPadding(0, dp(6), 0, dp(18))
         })
         box.addView(android.widget.ImageView(this).apply {
-            setImageBitmap(QrCode.generate(url, dp(300)))
+            setImageBitmap(QrCode.generate(url, dp(240)))
             setBackgroundColor(Color.WHITE)
             setPadding(dp(8), dp(8), dp(8), dp(8))
-        }, LinearLayout.LayoutParams(dp(316), dp(316)))
+        }, LinearLayout.LayoutParams(dp(256), dp(256)))
         box.addView(label(url, 12, Ui.TEXT3).apply { gravity = android.view.Gravity.CENTER; setPadding(0, dp(12), 0, dp(4)) })
         val statusLine = label("Waiting for your phone…", 15, Ui.ACCENT).apply { gravity = android.view.Gravity.CENTER; setPadding(0, dp(8), 0, dp(14)) }
         phoneDialogStatus = statusLine
@@ -1360,7 +1380,6 @@ class MainActivity : Activity() {
             setOnFocusChangeListener { v, focused ->
                 v.background = rounded(if (focused) focusedBg else normal, 12)
                 (v as TextView).setTextColor(if (primary) Ui.ON_ACCENT else if (focused) Color.WHITE else Ui.TEXT1)
-                v.animate().scaleX(if (focused) 1.02f else 1f).scaleY(if (focused) 1.02f else 1f).setDuration(90).start()
             }
             setOnClickListener { action() }
         }
