@@ -22,12 +22,18 @@ object NuvioTarget {
         val selected = target(context)
         val flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         if (selected == LEGACY) {
-            // The installed Native Legacy package exposes launcher activities only; device
-            // package inspection confirms it has no VIEW/deep-link filters. Launch its original
-            // icon activity explicitly rather than sending nuvio:// to Relay or another Nuvio app.
-            return Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
-                .setClassName("space.nuvio.nativelegacy", "space.nuvio.nativelegacy.Icone_original")
+            // Nuvio Legacy 2.0.8 handles nuvio-legacy://meta/{movie|series}/{id}.
+            // Use the explicit package so Android sends the deep link to Legacy, not
+            // Nuvio Re-Shaped or another app that may register a similar URI scheme.
+            val legacyType = if (type.equals("movie", ignoreCase = true)) "movie" else "series"
+            val uri = Uri.Builder()
+                .scheme("nuvio-legacy")
+                .authority("meta")
+                .appendPath(legacyType)
+                .appendPath(id.trim())
+                .build()
+            return Intent(Intent.ACTION_VIEW, uri)
+                .setPackage("space.nuvio.nativelegacy")
                 .addFlags(flags)
         }
         val uri = Uri.Builder().scheme("nuvio").authority("meta")
