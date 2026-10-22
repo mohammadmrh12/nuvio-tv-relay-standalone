@@ -76,6 +76,9 @@ class MainActivity : Activity() {
     private var updCheckButton: TextView? = null
     private var targetStatusRef: TextView? = null
     private var firstSettingsRow: LinearLayout? = null
+    private var phoneDialog: android.app.Dialog? = null
+    private var phoneServer: PhoneAddonServer? = null
+    private var phoneDialogStatus: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -234,13 +237,13 @@ class MainActivity : Activity() {
         actions.addView(connect, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(10) })
         actions.addView(sync, LinearLayout.LayoutParams(0, -2, 1f))
         col.addView(actions)
+        col.addView(button("Add from phone", action = { showPhoneAddDialog() }), lp(-1, -2, top = 10))
         manualSyncState = label("Status: Ready", 12, Ui.TEXT3).apply { setPadding(dp(4), dp(8), 0, 0) }
         col.addView(manualSyncState)
         col.addView(sectionTitle("HOW TO CONNECT"))
         listOf(
-            "1  Open Nuvio (NuvioTV or Re-Shaped) on this TV.",
-            "2  Go to Add-ons → Manage from phone (QR) and keep it open.",
-            "3  Come back here and press Connect."
+            "A  Open Nuvio (NuvioTV or Re-Shaped) > Add-ons > Manage from phone (QR), keep it open, then press Connect.",
+            "B  Press Add from phone, scan the QR code and paste your add-on links from the phone. No Nuvio app needed."
         ).forEach { col.addView(label(it, 14, Ui.TEXT2).apply { setPadding(dp(4), dp(3), 0, dp(3)) }) }
         return scroll
     }
@@ -641,6 +644,130 @@ class MainActivity : Activity() {
         return ToggleRow(row, pill, subtitle)
     }
 
+    // ---------- add-ons from the phone ----------
+
+    private fun localIpAddress(): String? = runCatching {
+        java.net.NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { it.inetAddresses.toList() }
+            .firstOrNull { it is java.net.Inet4Address && it.isSiteLocalAddress }
+            ?.hostAddress
+    }.getOrNull()
+
+    private fun randomToken(): String {
+        val bytes = ByteArray(9)
+        java.security.SecureRandom().nextBytes(bytes)
+        return android.util.Base64.encodeToString(bytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+    }
+
+    /** Runs [block] on the UI thread and waits for its result, so server threads never touch UI state directly. */
+    private fun <T> onUi(block: () -> T): T {
+        if (Looper.myLooper() == Looper.getMainLooper()) return block()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val holder = java.util.concurrent.atomic.AtomicReference<Result<T>>()
+        runOnUiThread { holder.set(runCatching(block)); latch.countDown() }
+        if (!latch.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw IllegalStateException("The TV did not respond")
+        return holder.get().getOrThrow()
+    }
+
+    private fun closePhoneDialog() { phoneDialog?.dismiss() }
+
+    private fun showPhoneAddDialog() {
+        val ip = localIpAddress()
+        if (ip == null) { message("The TV is not connected to a network."); return }
+        closePhoneDialog()
+        val token = randomToken()
+        val server = PhoneAddonServer(token, object : PhoneAddonServer.Host {
+            override fun list(): List<PhoneAddonServer.AddonRow> = onUi { addons.toList() }.map { PhoneAddonServer.AddonRow(it, cachedManifestName(it)) }
+            override fun add(rawUrl: String): String = phoneAdd(rawUrl)
+            override fun remove(url: String): String = phoneRemove(url)
+        })
+        val port = server.start()
+        if (port == null) { message("Could not open a local port for the phone page."); return }
+        val url = "http://$ip:$port/?t=$token"
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Material_NoActionBar)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setBackgroundColor(Ui.BG)
+            setPadding(dp(56), dp(32), dp(56), dp(32))
+        }
+        box.addView(label("Add add-ons from your phone", 26, Ui.TEXT1, true).apply { gravity = android.view.Gravity.CENTER })
+        box.addView(label("Scan the code with your phone camera (same Wi-Fi), then paste an add-on link.", 15, Ui.TEXT2).apply {
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(18))
+        })
+        box.addView(android.widget.ImageView(this).apply {
+            setImageBitmap(QrCode.generate(url, dp(300)))
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }, LinearLayout.LayoutParams(dp(316), dp(316)))
+        box.addView(label(url, 12, Ui.TEXT3).apply { gravity = android.view.Gravity.CENTER; setPadding(0, dp(12), 0, dp(4)) })
+        val statusLine = label("Waiting for your phone…", 15, Ui.ACCENT).apply { gravity = android.view.Gravity.CENTER; setPadding(0, dp(8), 0, dp(14)) }
+        phoneDialogStatus = statusLine
+        box.addView(statusLine)
+        val close = button("Close", action = { dialog.dismiss() })
+        box.addView(close, LinearLayout.LayoutParams(dp(260), -2))
+        dialog.setContentView(box)
+        dialog.setOnDismissListener {
+            server.stop()
+            if (phoneServer === server) { phoneServer = null; phoneDialog = null; phoneDialogStatus = null }
+        }
+        phoneServer = server
+        phoneDialog = dialog
+        dialog.show()
+        close.requestFocus()
+    }
+
+    private fun cachedManifestName(url: String): String {
+        val key = MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+        val name = runCatching { JSONObject(File(cacheDir, "api-cache/$key.json").readText()).optString("name") }.getOrDefault("")
+        return name.ifBlank { Uri.parse(url).host ?: "Add-on" }
+    }
+
+    private fun normalizePhoneUrl(raw: String): String {
+        var link = raw.trim().lines().first().trim()
+        if (link.startsWith("stremio://", true)) link = "https://" + link.substring("stremio://".length)
+        val uri = Uri.parse(link)
+        require(uri.scheme == "http" || uri.scheme == "https") { "Enter an http(s) or stremio:// link" }
+        require(!uri.host.isNullOrBlank()) { "Invalid link" }
+        return normalize(link)
+    }
+
+    private fun phoneAdd(rawUrl: String): String {
+        val url = normalizePhoneUrl(rawUrl)
+        val manifest = try { json(url) } catch (e: Exception) { throw IllegalStateException("Could not load this add-on: " + (e.message ?: "network error")) }
+        if (manifest.optString("id").isBlank()) throw IllegalStateException("This link is not an add-on manifest")
+        val name = manifest.optString("name").ifBlank { Uri.parse(url).host ?: "Add-on" }
+        val found = parseCatalogs(url, name, manifest)
+        val alreadyAdded = onUi {
+            val known = url in addons
+            addons.add(url)
+            val manual = prefs.getStringSet("manual_addons", emptySet()).orEmpty().toMutableSet().apply { add(url) }
+            val knownKeys = catalogs.map { it.key }.toSet()
+            val fresh = found.filter { it.key !in knownKeys }
+            val merged = withNativeContinue((catalogs + fresh).distinctBy { it.key })
+            catalogs.clear(); catalogs.addAll(merged)
+            selected.addAll(fresh.map { it.key })
+            prefs.edit().putStringSet("addons", addons.toSet()).putStringSet("manual_addons", manual).putStringSet("selected", selected.toSet()).apply()
+            render()
+            phoneDialogStatus?.text = "Added " + name
+            known
+        }
+        return if (alreadyAdded) "$name was already added" else "Added $name · ${found.size} catalogs"
+    }
+
+    private fun phoneRemove(url: String): String = onUi {
+        if (!addons.remove(url)) return@onUi "That add-on is not in the list"
+        val manual = prefs.getStringSet("manual_addons", emptySet()).orEmpty().toMutableSet().apply { remove(url) }
+        catalogs.removeAll { it.addon == url }
+        selected.removeAll { it.startsWith("$url|") }
+        prefs.edit().putStringSet("addons", addons.toSet()).putStringSet("manual_addons", manual).putStringSet("selected", selected.toSet()).apply()
+        render()
+        phoneDialogStatus?.text = "Removed an add-on"
+        "Removed"
+    }
+
     private fun connectToNuvio() {
         message("Looking for the Nuvio local add-on server…")
         worker.execute {
@@ -680,6 +807,16 @@ class MainActivity : Activity() {
                 if (importedUrls.isEmpty()) {
                     runOnUiThread { message("Connected to Nuvio on port " + connectedPort + ", but it returned no installed add-ons.") }
                     return@execute
+                }
+                // Keep add-ons added from the phone page alongside the ones imported from Nuvio.
+                for (manualUrl in prefs.getStringSet("manual_addons", emptySet()).orEmpty()) {
+                    if (importedUrls.add(manualUrl)) {
+                        try {
+                            val manifest = json(manualUrl)
+                            loadedCatalogs.addAll(parseCatalogs(manualUrl, manifest.optString("name").ifBlank { Uri.parse(manualUrl).host ?: "Add-on" }, manifest))
+                            importedCount++
+                        } catch (_: Exception) { }
+                    }
                 }
                 addons.clear()
                 addons.addAll(importedUrls)
@@ -1071,6 +1208,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        closePhoneDialog()
         mainHandler.removeCallbacksAndMessages(null)
         worker.shutdownNow()
         super.onDestroy()
