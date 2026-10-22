@@ -54,13 +54,13 @@ Launcher discussion / details: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuL
 ## Requirements
 
 - Android TV or Google TV.
-- Nuvio Re-Shaped installed on the same TV.
+- Nuvio installed on the same TV: the official NuvioTV or Nuvio Re-Shaped (both expose the same local add-on server used by Connect). Nuvio Legacy can be chosen as the play target in Relay settings.
 - A catalog source supported by the current relay implementation.
 
 ## Setup
 
 1. Install and open **Nuvio TV Relay** on the TV.
-2. Open **Nuvio Re-Shaped**.
+2. Open **Nuvio** (NuvioTV or Nuvio Re-Shaped).
 3. Navigate to **Add-ons → Manage from phone (QR)** and keep that screen open.
 4. Return to Nuvio TV Relay and choose **Connect**.
 5. Wait for catalogs to load and synchronize. Behavior may vary by Nuvio Re-Shaped version and Android TV launcher.

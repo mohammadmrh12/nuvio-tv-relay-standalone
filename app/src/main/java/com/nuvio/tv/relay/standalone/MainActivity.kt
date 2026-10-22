@@ -34,6 +34,9 @@ class MainActivity : Activity() {
     private var rotationIndex = 0
     private val sectionViews = linkedMapOf<String, View>()
     private lateinit var status: TextView
+    private lateinit var selectionSummary: TextView
+    private var selectAllButton: TextView? = null
+    private var selectNoneButton: TextView? = null
     private lateinit var list: LinearLayout
     private var manualSyncButton: TextView? = null
     private var refreshAddonsButton: TextView? = null
@@ -86,7 +89,7 @@ class MainActivity : Activity() {
         header.addView(label("NUVIO  /  RELAY", 12, Color.rgb(94, 190, 255), true))
         header.addView(label("Nuvio Relay", 32, Color.WHITE, true))
         header.addView(label("Make your Google TV home screen yours.", 17, Color.rgb(205, 216, 232)))
-        header.addView(label("Choose catalogs, keep Continue Watching fresh, and open titles directly in Nuvio Re-Shaped.", 14, Color.rgb(153, 170, 192)))
+        header.addView(label("Choose catalogs, keep Continue Watching fresh, and open titles directly in Nuvio.", 14, Color.rgb(153, 170, 192)))
         root.addView(header, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(20) })
         controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -97,7 +100,7 @@ class MainActivity : Activity() {
         controls.addView(label("CONNECT", 13, Color.rgb(94, 190, 255), true))
         val connectButton = button("Connect", action = { connectToNuvio() }).apply { id = View.generateViewId() }
         controls.addView(label("ADD-ON SETUP GUIDE", 14, Color.WHITE, true))
-        controls.addView(label("1. Open Nuvio Re-Shaped on this TV.", 13, Color.rgb(205, 216, 232)))
+        controls.addView(label("1. Open Nuvio (NuvioTV or Re-Shaped) on this TV.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("2. Go to Add-ons → Manage from phone (QR).", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("3. Keep the QR / phone-management screen open.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("4. Return here and select Connect.", 13, Color.rgb(205, 216, 232)))
@@ -123,7 +126,11 @@ class MainActivity : Activity() {
             gravity = android.view.Gravity.START
         }
         fun refreshTargetStatus() {
-            targetStatus.text = "Selected: " + if (NuvioTarget.target(this) == NuvioTarget.LEGACY) "Nuvio Legacy" else "Nuvio Re-Shaped"
+            val legacySelected = NuvioTarget.target(this) == NuvioTarget.LEGACY
+            val targetInstalled = runCatching { packageManager.getPackageInfo(NuvioTarget.packageName(this), 0); true }.getOrDefault(false)
+            targetStatus.text = "Selected: " + (if (legacySelected) "Nuvio Legacy" else "Nuvio Re-Shaped") +
+                if (targetInstalled) "  ·  installed" else "  ·  NOT installed on this TV"
+            targetStatus.setTextColor(if (targetInstalled) Color.rgb(105, 211, 176) else Color.rgb(255, 170, 120))
         }
         val reshapedTargetButton = button("Nuvio Re-Shaped", parent = targetRow, action = {
             prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.RESHAPED).apply()
@@ -304,7 +311,21 @@ class MainActivity : Activity() {
         }
         root.addView(catalogPanel, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
         catalogPanel.addView(label("CATALOG LIBRARY", 16, Color.WHITE, true))
-        catalogPanel.addView(label("Catalogs from Nuvio Re-Shaped appear here.", 14, Color.rgb(153, 170, 192)))
+        catalogPanel.addView(label("Catalogs from your Nuvio add-ons appear here.", 14, Color.rgb(153, 170, 192)))
+        selectionSummary = label("", 13, Color.rgb(153, 170, 192))
+        catalogPanel.addView(selectionSummary)
+        val selectionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.START
+        }
+        val selectAll = button("Select all", parent = selectionRow, action = { setAllCatalogsSelected(true) })
+        val selectNone = button("Select none", parent = selectionRow, action = { setAllCatalogsSelected(false) })
+        (selectAll.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(8) }
+        (selectNone.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f }
+        selectAllButton = selectAll; selectNoneButton = selectNone
+        catalogPanel.addView(selectionRow)
+        focusChain.add(selectAll); focusChain.add(selectNone)
+        configureFocusChain()
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         catalogPanel.addView(list)
         status = label("Ready · waiting for connection", 14, Color.rgb(130, 220, 180), true).apply {
@@ -312,7 +333,7 @@ class MainActivity : Activity() {
             background = rounded(Color.rgb(18, 43, 42), 10)
         }
         root.addView(status, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
-        root.addView(label("Nuvio Re-Shaped is not modified by this app.", 12, Color.rgb(130, 145, 164)))
+        root.addView(label("Nuvio is not modified by this app.", 12, Color.rgb(130, 145, 164)))
         // Start at the top of the action chain. Focusing the token field on launch
         // trapped DOWN navigation below the manual controls on TV remotes.
         connectButton.post {
@@ -327,7 +348,7 @@ class MainActivity : Activity() {
     }
 
     private fun connectToNuvio() {
-        message("Looking for Nuvio Re-Shaped local add-on server…")
+        message("Looking for the Nuvio local add-on server…")
         worker.execute {
             var connectedPort: Int? = null
             var addonArray: JSONArray? = null
@@ -341,7 +362,7 @@ class MainActivity : Activity() {
             val arr = addonArray
             if (connectedPort == null || arr == null) {
                 runOnUiThread {
-                    message("Nuvio Re-Shaped server not found. Open Nuvio Re-Shaped > Add-ons > Manage from phone (QR), keep that screen open, then retry.")
+                    message("Nuvio add-on server not found. Open Nuvio (NuvioTV or Re-Shaped) > Add-ons > Manage from phone (QR), keep that screen open, then retry.")
                 }
                 return@execute
             }
@@ -363,7 +384,7 @@ class MainActivity : Activity() {
                     } catch (_: Exception) { }
                 }
                 if (importedUrls.isEmpty()) {
-                    runOnUiThread { message("Connected to Nuvio Re-Shaped on port " + connectedPort + ", but it returned no installed add-ons.") }
+                    runOnUiThread { message("Connected to Nuvio on port " + connectedPort + ", but it returned no installed add-ons.") }
                     return@execute
                 }
                 addons.clear()
@@ -398,7 +419,7 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
-        if (addons.isEmpty()) { render(); message("Connect to Nuvio Re-Shaped or add a manifest URL."); return }
+        if (addons.isEmpty()) { render(); message("Connect to Nuvio or add a manifest URL."); return }
         worker.execute {
             val urls = addons.toList()
             val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
@@ -436,6 +457,7 @@ class MainActivity : Activity() {
         sectionViews.clear()
         if (catalogs.isEmpty()) {
             list.addView(label("No catalogs loaded yet.", 15, Color.LTGRAY))
+            updateSelectionSummary()
             configureFocusChain()
             return
         }
@@ -453,6 +475,9 @@ class MainActivity : Activity() {
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 setPadding(0, dp(2), 0, dp(2))
             }
+            fun selectionText(on: Boolean) = if (on) "Selected · included in sync" else "Not selected · tap to include"
+            fun selectionColor(on: Boolean) = if (on) Color.rgb(105, 211, 176) else Color.rgb(133, 147, 168)
+            val cardStatus = label(selectionText(c.key in selected), 12, selectionColor(c.key in selected))
             val cb = CheckBox(this).apply {
                 tag = "catalog-checkbox"
                 text = c.name
@@ -464,6 +489,9 @@ class MainActivity : Activity() {
                 setOnCheckedChangeListener { _, checked ->
                     if (checked) selected.add(c.key) else selected.remove(c.key)
                     prefs.edit().putStringSet("selected", selected.toSet()).apply()
+                    cardStatus.text = selectionText(checked)
+                    cardStatus.setTextColor(selectionColor(checked))
+                    updateSelectionSummary()
                 }
             }
             catalogFocusViews.add(cb)
@@ -479,14 +507,31 @@ class MainActivity : Activity() {
             heading.addView(typeBadge)
             section.addView(heading)
             section.addView(label(c.addonName, 12, Color.rgb(153, 170, 192)))
-            section.addView(label(if (c.key in selected) "Selected · included in sync" else "Not selected · tap to include", 12, if (c.key in selected) Color.rgb(105, 211, 176) else Color.rgb(133, 147, 168)))
+            section.addView(cardStatus)
             list.addView(section, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = (12 * resources.displayMetrics.density).toInt()
             })
         }
         focusChain.removeAll { it is CheckBox && it.tag == "catalog-checkbox" }
         focusChain.addAll(catalogFocusViews)
+        updateSelectionSummary()
         configureFocusChain()
+    }
+
+    private fun updateSelectionSummary() {
+        if (!::selectionSummary.isInitialized) return
+        val keys = catalogs.map { it.key }.toSet()
+        selectionSummary.text = if (keys.isEmpty()) "No catalogs loaded yet."
+            else selected.count { it in keys }.toString() + " of " + keys.size + " catalogs selected"
+    }
+
+    private fun setAllCatalogsSelected(all: Boolean) {
+        if (catalogs.isEmpty()) { message("No catalogs loaded yet."); return }
+        selected.clear()
+        if (all) selected.addAll(catalogs.map { it.key })
+        prefs.edit().putStringSet("selected", selected.toSet()).apply()
+        render()
+        message(if (all) "All catalogs selected." else "All catalogs deselected.")
     }
 
     private fun configureFocusChain() {
@@ -559,7 +604,7 @@ class MainActivity : Activity() {
 
     private fun refreshAddonsManually() {
         if (refreshingAddons) { message("Add-on refresh is already running."); return }
-        if (addons.isEmpty()) { refreshAddonsState?.text = "Status: No add-ons connected"; message("Connect to Nuvio Re-Shaped first."); return }
+        if (addons.isEmpty()) { refreshAddonsState?.text = "Status: No add-ons connected"; message("Connect to Nuvio first."); return }
         refreshingAddons = true
         refreshAddonsButton?.text = "Refresh Add-ons  ·  RUNNING…"
         refreshAddonsState?.text = "Status: Fetching latest manifests…"
@@ -651,10 +696,11 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 val all = linkedMapOf<String, Item>()
-                val firstNative = readNativeContinueWatching().firstOrNull()
+                val nativeContinue = readNativeContinueWatching()
+                val firstNative = nativeContinue.firstOrNull()
                 for (c in chosen) {
                     if (c.key == nativeContinueCatalog().key) {
-                        readNativeContinueWatching().forEach { item -> all.putIfAbsent(item.type.lowercase() + ":" + item.id, item) }
+                        nativeContinue.forEach { item -> all.putIfAbsent(item.type.lowercase() + ":" + item.id, item) }
                         continue
                     }
                     val rootUrl = c.addon.removeSuffix("/manifest.json").trimEnd('/')
@@ -679,12 +725,14 @@ class MainActivity : Activity() {
                     }
                 }
                 val wanted = all.values.filterNot { firstNative != null && it.type.equals(firstNative.type, true) && it.id == firstNative.id }.take(if (firstNative != null) 49 else 50)
-                val existing = existingIds()
                 val wantedIds = wanted.map { relayId(it) }.toSet() + setOfNotNull(firstNative?.let { pinnedNativeInternalId })
-                (existing - wantedIds).forEach { deleteRelay(it) }
                 var count = 0
-                wanted.forEach { if (publish(it)) count++ }
-                firstNative?.let { if (publish(it, pinnedFirst = true)) count++ }
+                synchronized(PublishLock.lock) {
+                    val rows = existingRows()
+                    (rows.keys - wantedIds).forEach { deleteRelay(it, rows) }
+                    wanted.forEach { if (publish(it, rows = rows)) count++ }
+                    firstNative?.let { if (publish(it, pinnedFirst = true, rows = rows)) count++ }
+                }
                 runOnUiThread {
                     val result = "Sync completed: published $count titles from ${chosen.size} catalogs."
                     manualSyncState?.text = "Status: SUCCESS · $count titles published"
@@ -701,7 +749,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun publish(item: Item, pinnedFirst: Boolean = false): Boolean {
+    private fun publish(item: Item, pinnedFirst: Boolean = false, rows: MutableMap<String, Long>? = null): Boolean {
         val programType = if (item.type.equals("movie", true)) TvContractCompat.WatchNextPrograms.TYPE_MOVIE else TvContractCompat.WatchNextPrograms.TYPE_TV_EPISODE
         val internalId = if (pinnedFirst) pinnedNativeInternalId else relayId(item)
         // Store the chosen Nuvio package and compatible deep link in the launcher row.
@@ -724,28 +772,38 @@ class MainActivity : Activity() {
         item.platformLogo?.let { builder.setLogoUri(Uri.parse(it)) }
         return try {
             val values = builder.build().toContentValues()
-            val existing = findId(internalId)
+            val existing = findId(internalId, rows)
             if (existing == null) {
-                contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values) != null
+                insertRow(values, internalId, rows) != null
             } else {
                 // Recreate the launcher row so Google TV cannot retain a stale cached intent URI.
                 contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(existing), null, null)
-                contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values) != null
+                insertRow(values, internalId, rows) != null
             }
         } catch (_: Exception) { false }
     }
 
-    private fun existingIds(): Set<String> {
-        val out = mutableSetOf<String>()
+    /** Inserts a Watch Next row and records its id so later publishes in the same pass see it. */
+    private fun insertRow(values: android.content.ContentValues, internalId: String, rows: MutableMap<String, Long>?): Uri? {
+        val uri = contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values)
+        if (rows != null && uri != null) runCatching { android.content.ContentUris.parseId(uri) }.getOrNull()?.let { rows[internalId] = it }
+        return uri
+    }
+
+    /** One provider scan returning relay row ids by internal provider id. */
+    private fun existingRows(): MutableMap<String, Long> {
+        val out = linkedMapOf<String, Long>()
         try { contentResolver.query(TvContractCompat.WatchNextPrograms.CONTENT_URI,
-            arrayOf(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID), null, null, null)?.use { c ->
-            val i = c.getColumnIndex(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID)
-            while (c.moveToNext()) c.getString(i)?.takeIf { it.startsWith("nuvio_relay_") }?.let(out::add)
+            arrayOf(TvContractCompat.WatchNextPrograms._ID, TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID), null, null, null)?.use { c ->
+            val pk = c.getColumnIndex(TvContractCompat.WatchNextPrograms._ID)
+            val ki = c.getColumnIndex(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID)
+            while (c.moveToNext()) c.getString(ki)?.takeIf { it.startsWith("nuvio_relay_") }?.let { out[it] = c.getLong(pk) }
         } } catch (_: Exception) { }
         return out
     }
 
-    private fun findId(internalId: String): Long? {
+    private fun findId(internalId: String, rows: Map<String, Long>? = null): Long? {
+        if (rows != null) return rows[internalId]
         try { contentResolver.query(TvContractCompat.WatchNextPrograms.CONTENT_URI,
             arrayOf(TvContractCompat.WatchNextPrograms._ID, TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID), null, null, null)?.use { c ->
             val pk = c.getColumnIndex(TvContractCompat.WatchNextPrograms._ID)
@@ -755,8 +813,8 @@ class MainActivity : Activity() {
         return null
     }
 
-    private fun deleteRelay(key: String): Boolean {
-        val id = findId(key) ?: return false
+    private fun deleteRelay(key: String, rows: Map<String, Long>? = null): Boolean {
+        val id = findId(key, rows) ?: return false
         return try { contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(id), null, null) > 0 } catch (_: Exception) { false }
     }
     override fun onDestroy() {

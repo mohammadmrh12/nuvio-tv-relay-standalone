@@ -2,7 +2,7 @@
 
 ## Connect
 
-1. Open Nuvio Re-Shaped on the same TV.
+1. Open Nuvio (the official NuvioTV or Nuvio Re-Shaped) on the same TV.
 2. Open **Add-ons → Manage from phone (QR)**.
 3. Keep the QR / phone-management screen open.
 4. Switch to Nuvio TV Relay and select **Connect**.

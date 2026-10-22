@@ -27,20 +27,23 @@ jobs:
           java-version: '17'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+      - name: Read app version
+        id: ver
+        run: echo "name=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | head -1 | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nuvio-tv-relay-v0.4.8-apk
+          name: nuvio-tv-relay-v${{ steps.ver.outputs.name }}-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.4.8
-          name: Nuvio TV Relay v0.4.8
+          tag_name: v${{ steps.ver.outputs.name }}
+          name: Nuvio TV Relay v${{ steps.ver.outputs.name }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: app/build/outputs/apk/debug/*.apk
