@@ -74,7 +74,7 @@ class RelaySyncService : Service() {
             }
             if (syncRunning.compareAndSet(false, true)) {
                 Thread {
-                    try { syncNow() }
+                    try { syncNow(); runCatching { AppUpdater.backgroundCheck(applicationContext) } }
                     finally { syncRunning.set(false) }
                 }.start()
             }

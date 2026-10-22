@@ -65,6 +65,19 @@ Launcher discussion / details: https://www.reddit.com/r/AndroidTVApps/s/5IGzeXuL
 4. Return to Nuvio TV Relay and choose **Connect**.
 5. Wait for catalogs to load and synchronize. Behavior may vary by Nuvio Re-Shaped version and Android TV launcher.
 
+## Updates
+
+Relay can update itself from this repository's GitHub Releases (Updates tab):
+
+- It checks for a new release every few hours (switch off under *Updates → Automatic updates*).
+- *Install automatically* downloads the APK, verifies its SHA-256 and hands it to Android's installer. Android may still ask you to confirm once.
+- The first time, allow Relay to install apps: *Settings → Apps → Security & restrictions → Unknown sources → Nuvio Relay*.
+- Updates only install if they are signed with the same key as the installed app, so every release must be built with the project's signing key.
+
+## Maintainers: signing key
+
+Release builds are signed with a fixed key so that in-app updates work. CI reads it from these repository secrets: `RELAY_KEYSTORE_BASE64`, `RELAY_KEYSTORE_PASSWORD`, `RELAY_KEY_ALIAS`, `RELAY_KEY_PASSWORD`. For local builds put `RELAY_KEYSTORE_FILE`, `RELAY_KEYSTORE_PASSWORD`, `RELAY_KEY_ALIAS` and `RELAY_KEY_PASSWORD` in the git-ignored `local.properties`. Never commit the keystore.
+
 ## Download
 
 The repository includes a debug APK at [the latest experimental release](https://github.com/mohammadmrh12/nuvio-tv-relay-standalone/releases/latest). Android may warn that it is an unknown app; install only if you trust the source. A signed production release is not available yet.
