@@ -25,9 +25,6 @@ import androidx.tvprovider.media.tv.WatchNextProgram
 class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var root: LinearLayout
-    private lateinit var controls: LinearLayout
-    private lateinit var catalogPanel: LinearLayout
-    private lateinit var pageScroll: ScrollView
     private val mainHandler = Handler(Looper.getMainLooper())
     private var rotationOn = true
     private var rotationSeconds = 15
@@ -44,7 +41,6 @@ class MainActivity : Activity() {
     private var manualSyncState: TextView? = null
     private var refreshAddonsState: TextView? = null
     private var rotationState: TextView? = null
-    private val focusChain = mutableListOf<View>()
     private var manualSyncRunning = false
     private var refreshingAddons = false
     private val catalogs = mutableListOf<Catalog>()
@@ -62,138 +58,302 @@ class MainActivity : Activity() {
     private fun nativeContinueCatalog() = Catalog("nuvio-native://continue-watching", "Nuvio Re-Shaped", "native", "continue-watching", "Nuvio Re-Shaped Continue Watching", null)
     private fun withNativeContinue(items: List<Catalog>): List<Catalog> = (items.filterNot { it.key == nativeContinueCatalog().key } + nativeContinueCatalog())
 
+    private val tabCaptions = listOf("Home", "Catalogs", "Settings", "Updates")
+    private lateinit var pagesHost: android.widget.FrameLayout
+    private val pages = mutableListOf<View>()
+    private val tabViews = mutableListOf<LinearLayout>()
+    private var currentTab = 0
+    private var connectButtonRef: TextView? = null
+    private var homeAddons: TextView? = null
+    private var homeCatalogs: TextView? = null
+    private var homeTarget: TextView? = null
+    private var updateBanner: TextView? = null
+    private var updCurrent: TextView? = null
+    private var updLatest: TextView? = null
+    private var updNotes: TextView? = null
+    private var updStatus: TextView? = null
+    private var updInstallButton: TextView? = null
+    private var updCheckButton: TextView? = null
+    private var targetStatusRef: TextView? = null
+    private var firstSettingsRow: LinearLayout? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         selected.addAll(prefs.getStringSet("selected", emptySet()) ?: emptySet())
         if (prefs.getStringSet("selected", emptySet()).isNullOrEmpty()) selected.add(nativeContinueCatalog().key)
         addons.addAll(prefs.getStringSet("addons", emptySet()) ?: emptySet())
-        pageScroll = ScrollView(this).apply {
-            isFillViewport = true
-            isSmoothScrollingEnabled = true
-            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
-            clipToPadding = false
-            setPadding(0, dp(8), 0, dp(20))
-        }
+        window.decorView.setBackgroundColor(Ui.BG)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(36, 30, 36, 36)
-            setBackgroundColor(Color.rgb(10, 14, 24))
+            setBackgroundColor(Ui.BG)
         }
-        pageScroll.addView(root)
-        setContentView(pageScroll)
-        val header = LinearLayout(this).apply {
+        setContentView(root)
+        root.addView(buildTopBar(), lp(-1, -2))
+        pagesHost = android.widget.FrameLayout(this)
+        root.addView(pagesHost, LinearLayout.LayoutParams(-1, 0, 1f))
+        status = label("Ready · waiting for connection", 13, Ui.TEXT2).apply {
+            setPadding(dp(56), dp(10), dp(56), dp(16))
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        root.addView(status, lp(-1, -2))
+        addPage(buildHomePage())
+        addPage(buildCatalogsPage())
+        addPage(buildSettingsPage())
+        addPage(buildUpdatesPage())
+        wireTabFocus(0, listOfNotNull(updateBanner, connectButtonRef, manualSyncButton))
+        wireTabFocus(1, listOfNotNull(selectAllButton, selectNoneButton))
+        wireTabFocus(2, firstSettingsRow?.let { row -> (0 until row.childCount).map { row.getChildAt(it) } } ?: emptyList())
+        wireTabFocus(3, listOfNotNull(updCheckButton, updInstallButton))
+        showTab(0)
+        refresh()
+        connectButtonRef?.post { connectButtonRef?.requestFocus() }
+        if (prefs.getBoolean("auto_sync", true)) {
+            val service = Intent(this, RelaySyncService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
+        }
+        updateHome()
+        refreshUpdatesPage()
+    }
+
+    // ---------- layout: top bar, tabs, pages ----------
+
+    private fun addPage(page: View) {
+        pagesHost.addView(page, android.widget.FrameLayout.LayoutParams(-1, -1))
+        pages.add(page)
+    }
+
+    private fun newPage(): Pair<ScrollView, LinearLayout> {
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            isSmoothScrollingEnabled = true
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
+        val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 20, 24, 20)
-            background = rounded(Color.rgb(20, 31, 49), 18)
+            setPadding(dp(56), dp(8), dp(56), dp(28))
         }
-        header.addView(label("NUVIO  /  RELAY", 12, Color.rgb(94, 190, 255), true))
-        header.addView(label("Nuvio Relay", 32, Color.WHITE, true))
-        header.addView(label("Make your Google TV home screen yours.", 17, Color.rgb(205, 216, 232)))
-        header.addView(label("Choose catalogs, keep Continue Watching fresh, and open titles directly in Nuvio.", 14, Color.rgb(153, 170, 192)))
-        root.addView(header, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(20) })
-        controls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(18), dp(22), dp(20))
-            background = rounded(Color.rgb(15, 22, 35), 16)
-        }
-        root.addView(controls, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) })
-        controls.addView(label("CONNECT", 13, Color.rgb(94, 190, 255), true))
-        val connectButton = button("Connect", action = { connectToNuvio() }).apply { id = View.generateViewId() }
-        controls.addView(label("ADD-ON SETUP GUIDE", 14, Color.WHITE, true))
-        controls.addView(label("1. Open Nuvio (NuvioTV or Re-Shaped) on this TV.", 13, Color.rgb(205, 216, 232)))
-        controls.addView(label("2. Go to Add-ons → Manage from phone (QR).", 13, Color.rgb(205, 216, 232)))
-        controls.addView(label("3. Keep the QR / phone-management screen open.", 13, Color.rgb(205, 216, 232)))
-        controls.addView(label("4. Return here and select Connect.", 13, Color.rgb(205, 216, 232)))
-        controls.addView(label("5. Catalogs will load and sync automatically.", 13, Color.rgb(205, 216, 232)))
-        controls.addView(label("MANUAL CONTROLS", 13, Color.rgb(94, 190, 255), true))
-        controls.addView(label("These buttons are manual confirmations. Existing automatic sync and rotation behavior remains enabled.", 13, Color.rgb(153, 170, 192)))
-        manualSyncState = label("Status: Ready", 12, Color.rgb(153, 170, 192))
-        manualSyncButton = button("Sync Now", action = { runManualSync() })
-        controls.addView(manualSyncState)
-        refreshAddonsState = label("Status: Waiting for refresh", 12, Color.rgb(153, 170, 192))
-        refreshAddonsButton = button("Refresh Add-ons", action = { refreshAddonsManually() })
-        controls.addView(refreshAddonsState)
-        rotationOn = prefs.getBoolean("rotation_enabled", true)
-        rotationState = label("Status: " + if (rotationOn) "ENABLED" else "DISABLED", 12,
-            if (rotationOn) Color.rgb(105, 211, 176) else Color.rgb(153, 170, 192))
-        rotationButton = button(rotationCaption(), action = { toggleRotation(); updateRotationControl("Rotation " + if (rotationOn) "enabled" else "disabled") })
-        controls.addView(rotationState)
-        controls.addView(label("OPEN TITLES IN", 13, Color.rgb(94, 190, 255), true))
-        controls.addView(label("Choose which Nuvio app opens when you press Play on a Relay title in the launcher.", 13, Color.rgb(153, 170, 192)))
-        val targetStatus = label("", 12, Color.rgb(153, 170, 192))
-        val targetRow = LinearLayout(this).apply {
+        scroll.addView(column)
+        return scroll to column
+    }
+
+    private fun buildTopBar(): View {
+        val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.START
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(56), dp(22), dp(56), dp(10))
         }
+        val brand = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        brand.addView(label("Nuvio Relay", 24, Ui.TEXT1, true).apply { setPadding(0, 0, 0, 0) })
+        brand.addView(label("v" + AppUpdater.currentVersion(this), 11, Ui.TEXT3).apply { setPadding(0, dp(2), 0, 0) })
+        bar.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
+        tabCaptions.forEachIndexed { index, caption ->
+            val tab = LinearLayout(this).apply {
+                id = View.generateViewId()
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                isFocusable = true
+                isClickable = true
+                setPadding(dp(18), dp(8), dp(18), dp(6))
+            }
+            tab.addView(TextView(this).apply {
+                text = caption
+                textSize = 16f
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            })
+            tab.addView(View(this), LinearLayout.LayoutParams(dp(24), dp(3)).apply { topMargin = dp(6) })
+            tab.setOnClickListener { showTab(index) }
+            tab.setOnFocusChangeListener { _, focused -> if (focused) showTab(index) else styleTabs() }
+            tabViews.add(tab)
+            bar.addView(tab, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(4) })
+        }
+        return bar
+    }
+
+    private fun styleTabs() {
+        tabViews.forEachIndexed { index, tab ->
+            val active = index == currentTab
+            val label = tab.getChildAt(0) as TextView
+            label.setTextColor(if (active || tab.isFocused) Ui.TEXT1 else Ui.TEXT3)
+            (tab.getChildAt(1)).background = rounded(if (active) Ui.ACCENT else Color.TRANSPARENT, 2)
+            tab.background = rounded(if (tab.isFocused) Ui.SURFACE2 else Color.TRANSPARENT, 12)
+        }
+    }
+
+    /** Pressing UP on a page's first controls returns to that page's own tab instead of jumping to a neighbouring tab. */
+    private fun wireTabFocus(index: Int, firstControls: List<View>) {
+        val tab = tabViews.getOrNull(index) ?: return
+        firstControls.forEach { v ->
+            if (v.id == View.NO_ID) v.id = View.generateViewId()
+            v.nextFocusUpId = tab.id
+        }
+        firstControls.firstOrNull()?.let { tab.nextFocusDownId = it.id }
+    }
+
+    private fun showTab(index: Int) {
+        currentTab = index
+        pages.forEachIndexed { i, page -> page.visibility = if (i == index) View.VISIBLE else View.GONE }
+        styleTabs()
+        if (index == 0) updateHome()
+        if (index == 3) refreshUpdatesPage()
+    }
+
+    // ---------- Home ----------
+
+    private fun buildHomePage(): View {
+        val (scroll, col) = newPage()
+        col.addView(label("Your Nuvio catalogs on the Google TV home screen.", 16, Ui.TEXT2).apply { setPadding(0, dp(4), 0, dp(18)) })
+        val banner = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Ui.ON_ACCENT)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+            background = rounded(Ui.ACCENT, 12)
+            isFocusable = true
+            isClickable = true
+            visibility = View.GONE
+            setOnClickListener { showTab(3) }
+        }
+        updateBanner = banner
+        col.addView(banner, lp(-1, -2, bottom = 14))
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(14), dp(22), dp(14))
+            background = rounded(Ui.SURFACE, 16)
+        }
+        homeAddons = summaryLine(card, "Add-ons")
+        homeCatalogs = summaryLine(card, "Catalogs")
+        homeTarget = summaryLine(card, "Opens titles in")
+        col.addView(card, lp(-1, -2, bottom = 16))
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val connect = button("Connect", primary = true, action = { connectToNuvio() })
+        connectButtonRef = connect
+        val sync = button("Sync now", action = { runManualSync() })
+        manualSyncButton = sync
+        actions.addView(connect, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(10) })
+        actions.addView(sync, LinearLayout.LayoutParams(0, -2, 1f))
+        col.addView(actions)
+        manualSyncState = label("Status: Ready", 12, Ui.TEXT3).apply { setPadding(dp(4), dp(8), 0, 0) }
+        col.addView(manualSyncState)
+        col.addView(sectionTitle("HOW TO CONNECT"))
+        listOf(
+            "1  Open Nuvio (NuvioTV or Re-Shaped) on this TV.",
+            "2  Go to Add-ons → Manage from phone (QR) and keep it open.",
+            "3  Come back here and press Connect."
+        ).forEach { col.addView(label(it, 14, Ui.TEXT2).apply { setPadding(dp(4), dp(3), 0, dp(3)) }) }
+        return scroll
+    }
+
+    private fun summaryLine(parent: LinearLayout, caption: String): TextView {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, dp(5), 0, dp(5))
+        }
+        row.addView(label(caption, 14, Ui.TEXT2).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        val value = label("", 15, Ui.TEXT1, true).apply { setPadding(0, 0, 0, 0) }
+        row.addView(value)
+        parent.addView(row)
+        return value
+    }
+
+    private fun targetInfo(): Pair<String, Boolean> {
+        val legacy = NuvioTarget.target(this) == NuvioTarget.LEGACY
+        val installed = runCatching { packageManager.getPackageInfo(NuvioTarget.packageName(this), 0); true }.getOrDefault(false)
+        return (if (legacy) "Nuvio Legacy" else "Nuvio Re-Shaped") to installed
+    }
+
+    private fun updateHome() {
+        val keys = catalogs.map { it.key }.toSet()
+        homeAddons?.text = addons.size.toString()
+        homeCatalogs?.text = if (keys.isEmpty()) "none yet" else selected.count { it in keys }.toString() + " of " + keys.size + " selected"
+        val (name, installed) = targetInfo()
+        homeTarget?.text = name + if (installed) "" else "  ·  not installed"
+        homeTarget?.setTextColor(if (installed) Ui.TEXT1 else Ui.WARN)
+    }
+
+    // ---------- Catalogs ----------
+
+    private fun buildCatalogsPage(): View {
+        val (scroll, col) = newPage()
+        selectionSummary = label("", 14, Ui.TEXT2).apply { setPadding(dp(4), dp(4), 0, dp(10)) }
+        col.addView(selectionSummary)
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val all = button("Select all", action = { setAllCatalogsSelected(true) })
+        val none = button("Select none", action = { setAllCatalogsSelected(false) })
+        selectAllButton = all; selectNoneButton = none
+        row.addView(all, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(10) })
+        row.addView(none, LinearLayout.LayoutParams(0, -2, 1f))
+        col.addView(row, lp(-1, -2, bottom = 12))
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(list)
+        return scroll
+    }
+
+    // ---------- Settings ----------
+
+    private fun buildSettingsPage(): View {
+        val (scroll, col) = newPage()
+
+        col.addView(sectionTitle("OPEN TITLES IN"))
+        col.addView(hint("Which Nuvio app opens when you press Play on a Relay title."))
+        val targetStatus = label("", 12, Ui.TEXT3).apply { setPadding(dp(4), dp(6), 0, 0) }
+        targetStatusRef = targetStatus
         fun refreshTargetStatus() {
-            val legacySelected = NuvioTarget.target(this) == NuvioTarget.LEGACY
-            val targetInstalled = runCatching { packageManager.getPackageInfo(NuvioTarget.packageName(this), 0); true }.getOrDefault(false)
-            targetStatus.text = "Selected: " + (if (legacySelected) "Nuvio Legacy" else "Nuvio Re-Shaped") +
-                if (targetInstalled) "  ·  installed" else "  ·  NOT installed on this TV"
-            targetStatus.setTextColor(if (targetInstalled) Color.rgb(105, 211, 176) else Color.rgb(255, 170, 120))
+            val (name, installed) = targetInfo()
+            targetStatus.text = name + if (installed) "  ·  installed" else "  ·  NOT installed on this TV"
+            targetStatus.setTextColor(if (installed) Ui.SUCCESS else Ui.WARN)
+            updateHome()
         }
-        val reshapedTargetButton = button("Nuvio Re-Shaped", parent = targetRow, action = {
-            prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.RESHAPED).apply()
+        val targetRow = segmented(
+            listOf(NuvioTarget.RESHAPED to "Nuvio Re-Shaped", NuvioTarget.LEGACY to "Nuvio Legacy"),
+            { NuvioTarget.target(this) }
+        ) { key ->
+            prefs.edit().putString(NuvioTarget.PREF_KEY, key).apply()
             refreshTargetStatus()
-            Toast.makeText(this, "Play target set to Nuvio Re-Shaped", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Play target: " + targetInfo().first, Toast.LENGTH_SHORT).show()
             runManualSync()
-        })
-        val legacyTargetButton = button("Nuvio Legacy", parent = targetRow, action = {
-            prefs.edit().putString(NuvioTarget.PREF_KEY, NuvioTarget.LEGACY).apply()
-            refreshTargetStatus()
-            Toast.makeText(this, "Play target set to Nuvio Legacy", Toast.LENGTH_SHORT).show()
-            runManualSync()
-        })
-        (reshapedTargetButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(8) }
-        (legacyTargetButton.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f }
-        controls.addView(targetRow)
-        controls.addView(targetStatus)
+        }
+        firstSettingsRow = targetRow
+        col.addView(targetRow, lp(-1, -2, top = 10))
+        col.addView(targetStatus)
         refreshTargetStatus()
-        controls.addView(label("DESCRIPTION LANGUAGE", 13, Color.rgb(94, 190, 255), true))
-        controls.addView(label("Choose the language used for the synopsis under the metadata in the Relay artwork.", 13, Color.rgb(153, 170, 192)))
-        val descriptionLanguageRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.START
-        }
-        val descriptionLanguageStatus = label("", 12, Color.rgb(153, 170, 192))
-        val languageNames = mapOf("ar" to "العربية", "en" to "English", "fr" to "Français", "de" to "Deutsch")
-        fun updateDescriptionLanguageButtons() {
-            val current = prefs.getString("description_language", "en") ?: "en"
-            descriptionLanguageStatus.text = "Selected: " + (languageNames[current] ?: "English")
-        }
-        fun languageButton(code: String, name: String) = button(name, parent = descriptionLanguageRow, action = {
+
+        col.addView(sectionTitle("DESCRIPTION LANGUAGE"))
+        col.addView(hint("Language of the synopsis drawn under the metadata in the artwork."))
+        col.addView(segmented(
+            listOf("ar" to "العربية", "en" to "English", "fr" to "Français", "de" to "Deutsch"),
+            { prefs.getString("description_language", "en") ?: "en" }
+        ) { code ->
             prefs.edit().putString("description_language", code).apply()
-            updateDescriptionLanguageButtons()
-            Toast.makeText(this, "Description language: $name. Syncing…", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Description language updated. Syncing…", Toast.LENGTH_SHORT).show()
             runManualSync()
-        })
-        listOf("ar" to "العربية", "en" to "English", "fr" to "Français", "de" to "Deutsch").forEach { (code, name) ->
-            val b = languageButton(code, name)
-            (b.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(6) }
-        }
-        controls.addView(descriptionLanguageRow)
-        controls.addView(descriptionLanguageStatus)
-        updateDescriptionLanguageButtons()
-        var synopsisToggle: TextView? = null
-        synopsisToggle = button("", action = {
+        }, lp(-1, -2, top = 10))
+
+        col.addView(sectionTitle("ARTWORK"))
+        var synopsisPill: TextView? = null
+        val synopsisRow = toggleRow("Synopsis", "Show the synopsis text on the artwork.", { prefs.getBoolean("synopsis_enabled", true) }) {
             val enabled = !prefs.getBoolean("synopsis_enabled", true)
             prefs.edit().putBoolean("synopsis_enabled", enabled).commit()
-            synopsisToggle?.text = "SYNOPSIS: " + (if (enabled) "ON" else "OFF") + "  ·  Press OK to change"
-            Toast.makeText(this@MainActivity, if (enabled) "Synopsis ON · syncing titles" else "Synopsis OFF · syncing titles", Toast.LENGTH_SHORT).show()
+            synopsisPill?.let { paintPill(it, enabled) }
+            Toast.makeText(this, if (enabled) "Synopsis ON · syncing titles" else "Synopsis OFF · syncing titles", Toast.LENGTH_SHORT).show()
             runManualSync()
-        }).apply {
-            isFocusable = true
-            isFocusableInTouchMode = true
         }
-        // Render explicit ON/OFF state; unlike a CheckBox this is reliable with TV D-pad focus.
-        synopsisToggle?.text = "SYNOPSIS: " + (if (prefs.getBoolean("synopsis_enabled", true)) "ON" else "OFF") + "  ·  Press OK to change"
-        // button() already attaches synopsisToggle to controls; do not add it twice.
-        controls.addView(label("TMDB ENRICHMENT", 13, Color.rgb(94, 190, 255), true))
-        controls.addView(label("Add a TMDB API Read Access Token to enrich missing posters, backdrops, logos, ratings and release years. The token is stored locally on this device.", 13, Color.rgb(153, 170, 192)))
+        synopsisPill = synopsisRow.pill
+        col.addView(synopsisRow.row, lp(-1, -2, bottom = 8))
+        rotationOn = prefs.getBoolean("rotation_enabled", true)
+        val rotationRow = toggleRow("Catalog rotation", "Cycle through your selected catalogs on the home screen.", { rotationOn }) { toggleRotation() }
+        rotationButton = rotationRow.pill
+        rotationState = rotationRow.subtitle
+        col.addView(rotationRow.row)
+
+        col.addView(sectionTitle("TMDB ENRICHMENT"))
+        col.addView(hint("Add a TMDB API Read Access Token to fill in missing posters, backdrops, logos, ratings and years. It is stored only on this device."))
         val tmdbTokenInput = EditText(this).apply {
             id = View.generateViewId()
             hint = "TMDB API Read Access Token"
-            setHintTextColor(Color.rgb(150, 166, 188))
+            setHintTextColor(Ui.TEXT3)
             setTextColor(Color.WHITE)
             textSize = 16f
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -209,9 +369,9 @@ class MainActivity : Activity() {
             setSelectAllOnFocus(false)
             setText(prefs.getString("tmdb_read_token", ""))
             setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = rounded(Color.rgb(25, 34, 50), 10)
+            background = rounded(Ui.SURFACE2, 10)
             setOnFocusChangeListener { view, focused ->
-                view.background = rounded(if (focused) Color.rgb(35, 65, 91) else Color.rgb(25, 34, 50), 10)
+                view.background = rounded(if (focused) Ui.ACCENT_FOCUS else Ui.SURFACE2, 10)
             }
             setOnClickListener {
                 requestFocus()
@@ -224,7 +384,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        controls.addView(tmdbTokenInput, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10); bottomMargin = dp(8) })
+        col.addView(tmdbTokenInput, lp(-1, -2, top = 10, bottom = 8))
         tmdbTokenInput.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
                 val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
@@ -297,54 +457,188 @@ class MainActivity : Activity() {
                 }
             }
         }).apply { id = View.generateViewId() }
-        controls.addView(tmdbStatus)
-        // Main actions first; render() appends the live catalog checkboxes so D-pad
-        // can continue into the catalog library instead of getting trapped at Save.
-        focusChain.clear()
-        focusChain.addAll((listOfNotNull(connectButton, manualSyncButton, refreshAddonsButton, rotationButton, reshapedTargetButton, legacyTargetButton) + (0 until descriptionLanguageRow.childCount).map { descriptionLanguageRow.getChildAt(it) } + listOfNotNull(synopsisToggle, tmdbTokenInput, saveTmdbButton)).map { it as View })
-        configureFocusChain()
-        connectButton.nextFocusDownId = manualSyncButton?.id ?: connectButton.id
-        catalogPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(18))
-            background = rounded(Color.rgb(15, 22, 35), 16)
+        col.addView(saveTmdbButton, lp(-1, -2))
+        col.addView(tmdbStatus.apply { setPadding(dp(4), dp(8), 0, 0) })
+
+        col.addView(sectionTitle("ADD-ONS"))
+        col.addView(hint("Reload the manifests of the add-ons you connected."))
+        val refreshButton = button("Refresh add-ons", action = { refreshAddonsManually() })
+        refreshAddonsButton = refreshButton
+        col.addView(refreshButton, lp(-1, -2, top = 8))
+        refreshAddonsState = label("Status: Waiting for refresh", 12, Ui.TEXT3).apply { setPadding(dp(4), dp(6), 0, 0) }
+        col.addView(refreshAddonsState)
+        return scroll
+    }
+
+    // ---------- Updates ----------
+
+    private fun buildUpdatesPage(): View {
+        val (scroll, col) = newPage()
+        col.addView(sectionTitle("VERSION"))
+        updCurrent = label("", 18, Ui.TEXT1, true).apply { setPadding(dp(4), dp(8), 0, 0) }
+        updLatest = label("", 14, Ui.TEXT2).apply { setPadding(dp(4), dp(4), 0, 0) }
+        col.addView(updCurrent); col.addView(updLatest)
+        updNotes = label("", 12, Ui.TEXT3).apply { setPadding(dp(4), dp(10), 0, dp(6)) }
+        col.addView(updNotes)
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val check = button("Check for updates", action = { checkForUpdatesNow() })
+        val install = button("Install update", primary = true, action = { installUpdateNow() }).apply { visibility = View.GONE }
+        updCheckButton = check; updInstallButton = install
+        actions.addView(check, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(10) })
+        actions.addView(install, LinearLayout.LayoutParams(0, -2, 1f))
+        col.addView(actions, lp(-1, -2, top = 8))
+        updStatus = label("", 13, Ui.TEXT2).apply { setPadding(dp(4), dp(8), 0, 0) }
+        col.addView(updStatus)
+
+        col.addView(sectionTitle("AUTOMATIC UPDATES"))
+        var checkPill: TextView? = null
+        val checkRow = toggleRow("Check for updates", "Look for a new GitHub release every few hours.", { prefs.getBoolean("auto_update_check", true) }) {
+            val on = !prefs.getBoolean("auto_update_check", true)
+            prefs.edit().putBoolean("auto_update_check", on).apply()
+            checkPill?.let { paintPill(it, on) }
         }
-        root.addView(catalogPanel, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
-        catalogPanel.addView(label("CATALOG LIBRARY", 16, Color.WHITE, true))
-        catalogPanel.addView(label("Catalogs from your Nuvio add-ons appear here.", 14, Color.rgb(153, 170, 192)))
-        selectionSummary = label("", 13, Color.rgb(153, 170, 192))
-        catalogPanel.addView(selectionSummary)
-        val selectionRow = LinearLayout(this).apply {
+        checkPill = checkRow.pill
+        col.addView(checkRow.row, lp(-1, -2, bottom = 8))
+        var installPill: TextView? = null
+        val installRow = toggleRow("Install automatically", "Download and install new releases without asking. Android may still ask you to confirm once.", { prefs.getBoolean("auto_update_install", true) }) {
+            val on = !prefs.getBoolean("auto_update_install", true)
+            prefs.edit().putBoolean("auto_update_install", on).apply()
+            installPill?.let { paintPill(it, on) }
+        }
+        installPill = installRow.pill
+        col.addView(installRow.row)
+        col.addView(hint("Updates come from github.com/mohammadmrh12/nuvio-tv-relay-standalone and must be signed with the same key as this app."))
+        return scroll
+    }
+
+    private fun refreshUpdatesPage() {
+        updCurrent?.text = "Installed  v" + AppUpdater.currentVersion(this)
+        val release = AppUpdater.latestAvailable(this)
+        val known = AppUpdater.latestKnownVersion(this)
+        updLatest?.text = when {
+            release != null -> "New version available  v" + release.version
+            known.isNotBlank() -> "You are up to date  (latest v$known)"
+            else -> "Not checked yet"
+        }
+        updLatest?.setTextColor(if (release != null) Ui.ACCENT else Ui.TEXT2)
+        updNotes?.text = release?.notes?.take(420).orEmpty()
+        updInstallButton?.visibility = if (release != null) View.VISIBLE else View.GONE
+        updStatus?.text = prefs.getString("update_status", "").orEmpty()
+        updateBanner?.apply {
+            visibility = if (release != null) View.VISIBLE else View.GONE
+            text = if (release != null) "Update available: v" + release.version + "  ·  press to review" else ""
+        }
+    }
+
+    private fun checkForUpdatesNow() {
+        updStatus?.text = "Checking GitHub…"
+        Thread {
+            val result = runCatching { AppUpdater.checkNow(this) }
+            runOnUiThread {
+                result.onFailure { updStatus?.text = "Could not check: " + (it.message ?: it.javaClass.simpleName) }
+                result.onSuccess { prefs.edit().remove("update_status").apply() }
+                refreshUpdatesPage()
+            }
+        }.start()
+    }
+
+    private fun installUpdateNow() {
+        val release = AppUpdater.latestAvailable(this) ?: return
+        AppUpdater.pendingConfirmation?.let { confirm ->
+            runCatching { startActivity(Intent(confirm).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            return
+        }
+        if (!AppUpdater.canInstall(this)) {
+            updStatus?.text = "Allow Relay to install apps: Settings → Apps → Security & restrictions → Unknown sources → Nuvio Relay, then try again."
+            if (!AppUpdater.openInstallPermissionSettings(this)) message("Open the TV Settings and allow Nuvio Relay under Unknown sources.")
+            return
+        }
+        updStatus?.text = "Downloading v" + release.version + "…"
+        updInstallButton?.isEnabled = false
+        Thread {
+            val result = runCatching { AppUpdater.downloadAndInstall(this, release) { pct -> runOnUiThread { updStatus?.text = "Downloading v" + release.version + "…  " + pct + "%" } } }
+            runOnUiThread {
+                updInstallButton?.isEnabled = true
+                result.onFailure { updStatus?.text = "Update failed: " + (it.message ?: it.javaClass.simpleName) }
+                result.onSuccess { updStatus?.text = prefs.getString("update_status", "Installing update…") }
+            }
+        }.start()
+    }
+
+    // ---------- reusable widgets ----------
+
+    private fun lp(w: Int, h: Int, top: Int = 0, bottom: Int = 0) =
+        LinearLayout.LayoutParams(w, h).apply { topMargin = dp(top); bottomMargin = dp(bottom) }
+
+    private fun sectionTitle(text: String) = label(text, 12, Ui.ACCENT, true).apply {
+        letterSpacing = 0.12f
+        setPadding(dp(4), dp(26), 0, dp(2))
+    }
+
+    private fun hint(text: String) = label(text, 13, Ui.TEXT3).apply { setPadding(dp(4), dp(2), 0, 0) }
+
+    private fun segmented(options: List<Pair<String, String>>, current: () -> String, onPick: (String) -> Unit): LinearLayout {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val items = mutableListOf<Pair<String, TextView>>()
+        fun style(tv: TextView, selectedItem: Boolean, focused: Boolean) {
+            tv.background = rounded(when { focused -> Ui.ACCENT_FOCUS; selectedItem -> Ui.ACCENT_SOFT; else -> Ui.SURFACE2 }, 12)
+            tv.setTextColor(if (selectedItem || focused) Color.WHITE else Ui.TEXT2)
+        }
+        fun restyle() { items.forEach { (key, tv) -> style(tv, key == current(), tv.isFocused) } }
+        options.forEachIndexed { index, (key, caption) ->
+            val tv = TextView(this).apply {
+                text = caption
+                textSize = 15f
+                gravity = android.view.Gravity.CENTER
+                minHeight = dp(50)
+                isFocusable = true
+                isClickable = true
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                setOnFocusChangeListener { v, focused -> style(v as TextView, key == current(), focused) }
+                setOnClickListener { onPick(key); restyle() }
+            }
+            items.add(key to tv)
+            row.addView(tv, LinearLayout.LayoutParams(0, -2, 1f).apply { if (index < options.lastIndex) marginEnd = dp(8) })
+        }
+        restyle()
+        return row
+    }
+
+    private class ToggleRow(val row: LinearLayout, val pill: TextView, val subtitle: TextView)
+
+    private fun paintPill(pill: TextView, on: Boolean) {
+        pill.text = if (on) "ON" else "OFF"
+        pill.setTextColor(if (on) Ui.ON_ACCENT else Ui.TEXT2)
+        pill.background = rounded(if (on) Ui.SUCCESS else Ui.SURFACE2, 14)
+    }
+
+    private fun toggleRow(title: String, subtitleText: String, get: () -> Boolean, onClick: () -> Unit): ToggleRow {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.START
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+            isFocusable = true
+            isClickable = true
+            background = rounded(Ui.SURFACE, 12)
+            setOnFocusChangeListener { v, focused -> v.background = rounded(if (focused) Ui.SURFACE_FOCUS else Ui.SURFACE, 12) }
         }
-        val selectAll = button("Select all", parent = selectionRow, action = { setAllCatalogsSelected(true) })
-        val selectNone = button("Select none", parent = selectionRow, action = { setAllCatalogsSelected(false) })
-        (selectAll.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f; rightMargin = dp(8) }
-        (selectNone.layoutParams as LinearLayout.LayoutParams).apply { width = 0; weight = 1f }
-        selectAllButton = selectAll; selectNoneButton = selectNone
-        catalogPanel.addView(selectionRow)
-        focusChain.add(selectAll); focusChain.add(selectNone)
-        configureFocusChain()
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        catalogPanel.addView(list)
-        status = label("Ready · waiting for connection", 14, Color.rgb(130, 220, 180), true).apply {
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = rounded(Color.rgb(18, 43, 42), 10)
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(label(title, 16, Ui.TEXT1, true).apply { setPadding(0, 0, 0, 0) })
+        val subtitle = label(subtitleText, 12, Ui.TEXT3).apply { setPadding(0, dp(2), 0, 0) }
+        texts.addView(subtitle)
+        row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        val pill = TextView(this).apply {
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            minWidth = dp(64)
         }
-        root.addView(status, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
-        root.addView(label("Nuvio is not modified by this app.", 12, Color.rgb(130, 145, 164)))
-        // Start at the top of the action chain. Focusing the token field on launch
-        // trapped DOWN navigation below the manual controls on TV remotes.
-        connectButton.post {
-            pageScroll.scrollTo(0, 0)
-            connectButton.requestFocus()
-        }
-        refresh()
-        if (prefs.getBoolean("auto_sync", true)) {
-            val service = Intent(this, RelaySyncService::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
-        }
+        paintPill(pill, get())
+        row.addView(pill)
+        row.setOnClickListener { onClick() }
+        return ToggleRow(row, pill, subtitle)
     }
 
     private fun connectToNuvio() {
@@ -456,73 +750,57 @@ class MainActivity : Activity() {
         list.removeAllViews()
         sectionViews.clear()
         if (catalogs.isEmpty()) {
-            list.addView(label("No catalogs loaded yet.", 15, Color.LTGRAY))
+            list.addView(label("No catalogs yet. Open the Home tab and press Connect.", 15, Ui.TEXT3).apply { setPadding(dp(4), dp(10), 0, 0) })
             updateSelectionSummary()
-            configureFocusChain()
             return
         }
-        val catalogFocusViews = mutableListOf<View>()
-        catalogs.distinctBy { it.key }.forEach { c ->
-            val section = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(18), dp(12), dp(18), dp(14))
-                background = rounded(Color.rgb(20, 27, 41), 14)
-                isFocusable = false
-            }
-            sectionViews[c.key] = section
-            val heading = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(0, dp(2), 0, dp(2))
-            }
-            fun selectionText(on: Boolean) = if (on) "Selected · included in sync" else "Not selected · tap to include"
-            fun selectionColor(on: Boolean) = if (on) Color.rgb(105, 211, 176) else Color.rgb(133, 147, 168)
-            val cardStatus = label(selectionText(c.key in selected), 12, selectionColor(c.key in selected))
-            val cb = CheckBox(this).apply {
-                tag = "catalog-checkbox"
-                text = c.name
-                textSize = 17f
-                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-                setTextColor(Color.WHITE)
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(65, 190, 255))
-                isChecked = c.key in selected; isFocusable = true; setPadding(0, 4, 8, 4)
-                setOnCheckedChangeListener { _, checked ->
-                    if (checked) selected.add(c.key) else selected.remove(c.key)
-                    prefs.edit().putStringSet("selected", selected.toSet()).apply()
-                    cardStatus.text = selectionText(checked)
-                    cardStatus.setTextColor(selectionColor(checked))
-                    updateSelectionSummary()
-                }
-            }
-            catalogFocusViews.add(cb)
-            heading.addView(cb, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val typeBadge = TextView(this).apply {
-                text = c.type.uppercase()
-                textSize = 11f
-                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-                setTextColor(Color.rgb(153, 210, 255))
-                setPadding(dp(10), dp(5), dp(10), dp(5))
-                background = rounded(Color.rgb(31, 53, 77), 9)
-            }
-            heading.addView(typeBadge)
-            section.addView(heading)
-            section.addView(label(c.addonName, 12, Color.rgb(153, 170, 192)))
-            section.addView(cardStatus)
-            list.addView(section, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = (12 * resources.displayMetrics.density).toInt()
-            })
-        }
-        focusChain.removeAll { it is CheckBox && it.tag == "catalog-checkbox" }
-        focusChain.addAll(catalogFocusViews)
+        catalogs.distinctBy { it.key }.forEach { c -> list.addView(catalogRow(c), lp(-1, -2, bottom = 6)) }
         updateSelectionSummary()
-        configureFocusChain()
+    }
+
+    private fun catalogRow(c: Catalog): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+            isFocusable = true
+            isClickable = true
+            background = rounded(Ui.SURFACE, 12)
+            setOnFocusChangeListener { v, focused -> v.background = rounded(if (focused) Ui.SURFACE_FOCUS else Ui.SURFACE, 12) }
+        }
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(label(c.name, 16, Ui.TEXT1, true).apply { setPadding(0, 0, 0, 0) })
+        texts.addView(label(c.addonName + "  ·  " + c.type.uppercase(), 12, Ui.TEXT3).apply { setPadding(0, dp(2), 0, 0) })
+        row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        val check = TextView(this).apply {
+            textSize = 16f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(Ui.ON_ACCENT)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        }
+        fun paint() {
+            val on = c.key in selected
+            check.text = if (on) "✓" else ""
+            check.background = rounded(if (on) Ui.SUCCESS else Ui.SURFACE2, 16)
+        }
+        paint()
+        row.addView(check, LinearLayout.LayoutParams(dp(32), dp(32)))
+        row.setOnClickListener {
+            if (c.key in selected) selected.remove(c.key) else selected.add(c.key)
+            prefs.edit().putStringSet("selected", selected.toSet()).apply()
+            paint()
+            updateSelectionSummary()
+        }
+        return row
     }
 
     private fun updateSelectionSummary() {
-        if (!::selectionSummary.isInitialized) return
-        val keys = catalogs.map { it.key }.toSet()
-        selectionSummary.text = if (keys.isEmpty()) "No catalogs loaded yet."
-            else selected.count { it in keys }.toString() + " of " + keys.size + " catalogs selected"
+        if (::selectionSummary.isInitialized) {
+            val keys = catalogs.map { it.key }.toSet()
+            selectionSummary.text = if (keys.isEmpty()) "No catalogs loaded yet."
+                else selected.count { it in keys }.toString() + " of " + keys.size + " catalogs selected"
+        }
+        updateHome()
     }
 
     private fun setAllCatalogsSelected(all: Boolean) {
@@ -534,46 +812,10 @@ class MainActivity : Activity() {
         message(if (all) "All catalogs selected." else "All catalogs deselected.")
     }
 
-    private fun configureFocusChain() {
-        val chain = focusChain.toList()
-        chain.forEachIndexed { index, view ->
-            view.isFocusable = true
-            view.isFocusableInTouchMode = true
-            view.nextFocusDownId = chain.getOrNull(index + 1)?.id ?: view.id
-            view.nextFocusUpId = chain.getOrNull(index - 1)?.id ?: view.id
-            view.nextFocusForwardId = chain.getOrNull(index + 1)?.id ?: view.id
-            // Keep the button helper's existing focus listener: it paints the visible
-            // blue focus state. Only catalog checkboxes need custom scroll-into-view.
-            if (view is CheckBox) view.setOnFocusChangeListener { focusedView, hasFocus ->
-                if (hasFocus) focusedView.postDelayed({
-                    if (!focusedView.isFocused || !::pageScroll.isInitialized) return@postDelayed
-                    val rect = android.graphics.Rect(0, 0, focusedView.width, focusedView.height)
-                    pageScroll.offsetDescendantRectToMyCoords(focusedView, rect)
-                    val viewportTop = pageScroll.scrollY + pageScroll.paddingTop + dp(10)
-                    val viewportBottom = pageScroll.scrollY + pageScroll.height - pageScroll.paddingBottom - dp(10)
-                    when {
-                        rect.top < viewportTop -> pageScroll.smoothScrollTo(0, (rect.top - pageScroll.paddingTop - dp(10)).coerceAtLeast(0))
-                        rect.bottom > viewportBottom -> pageScroll.smoothScrollTo(0, (rect.bottom - pageScroll.height + pageScroll.paddingBottom + dp(10)).coerceAtLeast(0))
-                    }
-                }, 70)
-            }
-            view.setOnKeyListener { _, keyCode, event ->
-                if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                when (keyCode) {
-                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> chain.getOrNull(index + 1)?.let { it.requestFocus(); true } ?: true
-                    android.view.KeyEvent.KEYCODE_DPAD_UP -> chain.getOrNull(index - 1)?.let { it.requestFocus(); true } ?: true
-                    else -> false
-                }
-            }
-        }
-    }
-
-    private fun rotationCaption(): String = if (rotationOn) "Rotation  ·  ENABLED (tap to stop)" else "Rotation  ·  DISABLED (tap to start)"
-
     private fun updateRotationControl(note: String? = null) {
-        rotationButton?.text = rotationCaption()
-        rotationState?.text = "Status: " + (if (rotationOn) "ENABLED" else "DISABLED") + (note?.let { " · $it" } ?: "")
-        rotationState?.setTextColor(if (rotationOn) Color.rgb(105, 211, 176) else Color.rgb(153, 170, 192))
+        rotationButton?.let { paintPill(it, rotationOn) }
+        val base = "Cycle through your selected catalogs on the home screen."
+        rotationState?.text = if (note.isNullOrBlank()) base else "$base  ·  $note"
     }
 
     private fun runManualSync() {
@@ -817,6 +1059,17 @@ class MainActivity : Activity() {
         val id = findId(key, rows) ?: return false
         return try { contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(id), null, null) > 0 } catch (_: Exception) { false }
     }
+    override fun onResume() {
+        super.onResume()
+        AppUpdater.uiForeground = true
+        refreshUpdatesPage()
+    }
+
+    override fun onPause() {
+        AppUpdater.uiForeground = false
+        super.onPause()
+    }
+
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
         worker.shutdownNow()
@@ -951,32 +1204,29 @@ class MainActivity : Activity() {
         }
     }
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
-    private fun button(caption: String, parent: LinearLayout = controls, action: () -> Unit): TextView {
+    private fun button(caption: String, parent: LinearLayout? = null, primary: Boolean = false, action: () -> Unit): TextView {
+        val normal = if (primary) Ui.ACCENT else Ui.SURFACE2
+        val focusedBg = if (primary) Ui.ACCENT_BRIGHT else Ui.ACCENT_FOCUS
         val b = TextView(this).apply {
             id = View.generateViewId()
             text = caption
             textSize = 16f
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            minHeight = dp(58)
+            gravity = android.view.Gravity.CENTER
+            minHeight = dp(54)
             isFocusable = true
             isClickable = true
-            setTextColor(Color.rgb(232, 239, 250))
+            setTextColor(if (primary) Ui.ON_ACCENT else Ui.TEXT1)
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-            setPadding(dp(18), dp(12), dp(18), dp(12))
-            background = rounded(Color.rgb(25, 34, 50), 13)
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+            background = rounded(normal, 12)
             setOnFocusChangeListener { v, focused ->
-                v.background = rounded(if (focused) Color.rgb(35, 91, 132) else Color.rgb(25, 34, 50), 13)
-                if (v is TextView) v.setTextColor(if (focused) Color.WHITE else Color.rgb(232, 239, 250))
-                v.scaleX = if (focused) 1.012f else 1f
-                v.scaleY = if (focused) 1.012f else 1f
+                v.background = rounded(if (focused) focusedBg else normal, 12)
+                (v as TextView).setTextColor(if (primary) Ui.ON_ACCENT else if (focused) Color.WHITE else Ui.TEXT1)
+                v.animate().scaleX(if (focused) 1.02f else 1f).scaleY(if (focused) 1.02f else 1f).setDuration(90).start()
             }
-            setOnClickListener {
-                action()
-            }
+            setOnClickListener { action() }
         }
-        parent.addView(b, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(4); bottomMargin = dp(4)
-        })
+        parent?.addView(b, lp(-1, -2, top = 4, bottom = 4))
         return b
     }
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -989,4 +1239,22 @@ class MainActivity : Activity() {
         setPadding(0, 8, 0, 8)
     }
     private fun message(value: String) { if (::status.isInitialized) runOnUiThread { status.text = value } }
+}
+
+/** Colour tokens for the minimalist Relay UI. */
+private object Ui {
+    val BG = Color.rgb(11, 15, 23)
+    val SURFACE = Color.rgb(18, 24, 38)
+    val SURFACE2 = Color.rgb(27, 35, 52)
+    val SURFACE_FOCUS = Color.rgb(32, 52, 78)
+    val ACCENT = Color.rgb(94, 190, 255)
+    val ACCENT_BRIGHT = Color.rgb(150, 214, 255)
+    val ACCENT_SOFT = Color.rgb(30, 70, 104)
+    val ACCENT_FOCUS = Color.rgb(35, 91, 132)
+    val ON_ACCENT = Color.rgb(8, 22, 36)
+    val TEXT1 = Color.rgb(232, 238, 248)
+    val TEXT2 = Color.rgb(150, 164, 186)
+    val TEXT3 = Color.rgb(104, 118, 140)
+    val SUCCESS = Color.rgb(105, 211, 176)
+    val WARN = Color.rgb(240, 180, 110)
 }
