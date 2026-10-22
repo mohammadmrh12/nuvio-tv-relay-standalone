@@ -29,14 +29,15 @@ class RelaySyncService : Service() {
     private val tmdbInFlight = ConcurrentHashMap.newKeySet<String>()
     private val artworkWarmupRunning = AtomicBoolean(false)
     private val syncRunning = AtomicBoolean(false)
+    private val publishExecutor = Executors.newSingleThreadExecutor()
     override fun onCreate() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel("relay_sync", "Nuvio Relay sync", NotificationManager.IMPORTANCE_LOW))
             startForeground(41, Notification.Builder(this, "relay_sync")
-                .setContentTitle("Dash")
-                .setContentText("Dash catalog sync is active")
+                .setContentTitle("Nuvio Relay")
+                .setContentText("Catalog sync is active")
                 .setSmallIcon(android.R.drawable.ic_popup_sync).build())
         }
     }
@@ -53,7 +54,8 @@ class RelaySyncService : Service() {
         val currentVersion = 20
         if (prefs.getInt("artwork_layout_version", 0) >= currentVersion) return
         runCatching {
-            existingIds().forEach { id -> deleteRelay(id) }
+            val rows = existingRows()
+            rows.keys.forEach { id -> deleteRelay(id, rows) }
         }
         runCatching {
             File(cacheDir, "poster-cache").listFiles()?.forEach { file ->
@@ -149,10 +151,13 @@ class RelaySyncService : Service() {
                         .put("overview", updated.optString("overview"))
                         .put("titleLogo", firstHttp(updated.optString("titleLogo"), highestResolutionImage(sourceLogo), sourceLogo))
                         .put("rating", ratingAndYear(updated, mt, m))
-                    handler.post {
+                    publishExecutor.execute {
                         // An enrichment response can arrive after rotation removed this title.
                         // Update existing rows only; never re-add an item from an old catalog visit.
-                        if (relayId(updatedItem) in existingIds()) publish(updatedItem)
+                        synchronized(PublishLock.lock) {
+                            val rows = existingRows()
+                            if (relayId(updatedItem) in rows) publish(updatedItem, rows = rows)
+                        }
                     }
                 }
                 all.putIfAbsent("$mt:$mid", JSONObject().put("id", mid).put("type", mt)
@@ -196,14 +201,17 @@ class RelaySyncService : Service() {
             }
             val wantedIds = wanted.map { relayId(it) }.toSet() +
                 setOfNotNull(firstNative?.let { "nuvio_relay_pinned_native_first" })
-            existingIds().filter { it !in wantedIds }.forEach { deleteRelay(it) }
-            wanted.forEachIndexed { index, item -> publish(item, topOfCatalog = index == 0) }
-            firstNative?.let { publish(it, pinnedFirst = true) }
+            synchronized(PublishLock.lock) {
+                val rows = existingRows()
+                rows.keys.filter { it !in wantedIds }.forEach { deleteRelay(it, rows) }
+                wanted.forEachIndexed { index, item -> publish(item, topOfCatalog = index == 0, rows = rows) }
+                firstNative?.let { publish(it, pinnedFirst = true, rows = rows) }
+            }
         } catch (e: Exception) {
             android.util.Log.w("NuvioRelay", "Background catalog sync failed (${e.javaClass.simpleName})", e)
         }
     }
-    private fun publish(m: JSONObject, pinnedFirst: Boolean = false, topOfCatalog: Boolean = false) {
+    private fun publish(m: JSONObject, pinnedFirst: Boolean = false, topOfCatalog: Boolean = false, rows: MutableMap<String, Long>? = null) {
         val type = m.optString("type"); val id = m.optString("id")
         // Honor the target chosen in Relay settings for every published launcher card.
         val target = NuvioTarget.intent(this, type, id)
@@ -230,11 +238,11 @@ class RelaySyncService : Service() {
         try {
             val values = builder.build().toContentValues()
             val internalId = if (pinnedFirst) "nuvio_relay_pinned_native_first" else relayId(m)
-            val existing = findId(internalId)
-            if (existing == null) contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values)
+            val existing = findId(internalId, rows)
+            if (existing == null) insertRow(values, internalId, rows)
             else {
                 contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(existing), null, null)
-                contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values)
+                insertRow(values, internalId, rows)
             }
         } catch (e: Exception) {
             android.util.Log.w("NuvioRelay", "Watch Next publish failed (${e.javaClass.simpleName})")
@@ -348,11 +356,12 @@ class RelaySyncService : Service() {
             val age = System.currentTimeMillis() - file.lastModified()
             // Negative matches expire quickly: title-only matching can miss alternate/original titles,
             // and a stale miss must not suppress enrichment for days after the matching logic improves.
-            val cachedTtl = if (runCatching { JSONObject(file.readText()).optBoolean("_no_match") }.getOrDefault(false))
+            val cachedOnDisk = runCatching { JSONObject(file.readText()) }.getOrNull()
+            val cachedTtl = if (cachedOnDisk?.optBoolean("_no_match") == true)
                 6L * 60 * 60 * 1000 else 30L * 24 * 60 * 60 * 1000
             if (age in 0..cachedTtl) {
                 try {
-                    val cached = JSONObject(file.readText())
+                    val cached = cachedOnDisk ?: throw IllegalStateException("unreadable TMDB cache entry")
                     if (cached.optBoolean("_no_match")) return source
                     // Older positive cache entries predate watch-provider metadata. Refresh them
                     // asynchronously instead of hiding platform logos for the full cache lifetime.
@@ -644,28 +653,37 @@ class RelaySyncService : Service() {
         }
     }
     private fun relayId(m: JSONObject) = "nuvio_relay_${m.optString("type").lowercase()}_${m.optString("id")}"
-    private fun existingIds(): Set<String> {
-        val out = mutableSetOf<String>()
-        try { contentResolver.query(TvContractCompat.WatchNextPrograms.CONTENT_URI, arrayOf(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID), null, null, null)?.use { c ->
-            val i = c.getColumnIndex(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID)
-            while (c.moveToNext()) c.getString(i)?.takeIf { it.startsWith("nuvio_relay_") }?.let(out::add)
+    /** Inserts a Watch Next row and records its id so later publishes in the same pass see it. */
+    private fun insertRow(values: android.content.ContentValues, internalId: String, rows: MutableMap<String, Long>?): Uri? {
+        val uri = contentResolver.insert(TvContractCompat.WatchNextPrograms.CONTENT_URI, values)
+        if (rows != null && uri != null) runCatching { android.content.ContentUris.parseId(uri) }.getOrNull()?.let { rows[internalId] = it }
+        return uri
+    }
+    /** One provider scan returning relay row ids by internal provider id. */
+    private fun existingRows(): MutableMap<String, Long> {
+        val out = linkedMapOf<String, Long>()
+        try { contentResolver.query(TvContractCompat.WatchNextPrograms.CONTENT_URI, arrayOf(TvContractCompat.WatchNextPrograms._ID, TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID), null, null, null)?.use { c ->
+            val pk = c.getColumnIndex(TvContractCompat.WatchNextPrograms._ID); val ki = c.getColumnIndex(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID)
+            while (c.moveToNext()) c.getString(ki)?.takeIf { it.startsWith("nuvio_relay_") }?.let { out[it] = c.getLong(pk) }
         } } catch (_: Exception) {}
         return out
     }
-    private fun findId(key: String): Long? {
+    private fun findId(key: String, rows: Map<String, Long>? = null): Long? {
+        if (rows != null) return rows[key]
         try { contentResolver.query(TvContractCompat.WatchNextPrograms.CONTENT_URI, arrayOf(TvContractCompat.WatchNextPrograms._ID, TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID), null, null, null)?.use { c ->
             val pk = c.getColumnIndex(TvContractCompat.WatchNextPrograms._ID); val ki = c.getColumnIndex(TvContractCompat.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID)
             while (c.moveToNext()) if (c.getString(ki) == key) return c.getLong(pk)
         } } catch (_: Exception) {}
         return null
     }
-    private fun deleteRelay(key: String) { findId(key)?.let { try { contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(it), null, null) } catch (_: Exception) {} } }
+    private fun deleteRelay(key: String, rows: Map<String, Long>? = null) { findId(key, rows)?.let { try { contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(it), null, null) } catch (_: Exception) {} } }
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
         handler.removeCallbacks(tick)
         artworkExecutor.shutdownNow()
         tmdbExecutor.shutdownNow()
+        publishExecutor.shutdownNow()
         super.onDestroy()
     }
 }

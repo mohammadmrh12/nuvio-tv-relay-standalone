@@ -8,10 +8,14 @@
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA"/>
     <uses-feature android:name="android.software.leanback" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+    <queries>
+        <package android:name="com.nuvioreshaped.tv"/>
+        <package android:name="space.nuvio.nativelegacy"/>
+    </queries>
     <application android:allowBackup="false" android:usesCleartextTraffic="true" android:label="" android:theme="@android:style/Theme.Material.NoActionBar" android:icon="@drawable/ic_relay" android:roundIcon="@drawable/ic_relay" android:banner="@drawable/ic_relay_banner">
         <provider android:name=".PosterCacheProvider" android:authorities="com.nuvio.tv.relay.standalone.poster-cache" android:exported="true" android:grantUriPermissions="true" />
         <service android:name=".RelaySyncService" android:exported="false" android:foregroundServiceType="dataSync"/>
-        <receiver android:name=".BootReceiver" android:enabled="true" android:exported="true">
+        <receiver android:name=".BootReceiver" android:enabled="true" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
         </receiver>
         <activity android:name=".MainActivity" android:exported="true">

@@ -43,7 +43,10 @@ class PosterCacheProvider : ContentProvider() {
             if (uri.getQueryParameter("kind") == "hero") createHero(uri, file)
             else {
                 val source = uri.getQueryParameter("url") ?: throw java.io.FileNotFoundException("Poster URL missing")
-                val temp = File(dir, "$key.tmp")
+                requireHttpUrl(source)
+                // The cache key is the hash of the source URL; refuse requests whose key does not match it.
+                if (sha256(source) != key) throw java.io.FileNotFoundException("Poster key mismatch")
+                val temp = File(dir, "$key.${System.nanoTime()}.tmp")
                 download(source, temp)
                 if (!temp.renameTo(file)) { temp.copyTo(file, overwrite = true); temp.delete() }
             }
@@ -55,6 +58,7 @@ class PosterCacheProvider : ContentProvider() {
 
     private fun createHero(uri: Uri, target: File) {
         val bgUrl = uri.getQueryParameter("background") ?: throw java.io.FileNotFoundException("Hero background missing")
+        requireHttpUrl(bgUrl)
         val logoUrl = uri.getQueryParameter("logo")
         val rating = uri.getQueryParameter("rating").orEmpty().trim()
         val platformUrl = uri.getQueryParameter("platform")
@@ -74,6 +78,7 @@ class PosterCacheProvider : ContentProvider() {
         canvas.drawBitmap(bg, null, Rect(0, 0, w, h), paint)
 
         if (!logoUrl.isNullOrBlank()) {
+            requireHttpUrl(logoUrl)
             val logo = decodeUrl(logoUrl, maxWidth = 1200, maxHeight = 400)
             if (logo != null) {
                 // Fixed normalized logo box: every hero uses identical placement and bounds.
@@ -289,7 +294,7 @@ class PosterCacheProvider : ContentProvider() {
             layout.draw(canvas)
             canvas.restore()
         }
-        val temp = File(target.parentFile, target.nameWithoutExtension + ".tmp")
+        val temp = File(target.parentFile, target.nameWithoutExtension + "." + System.nanoTime() + ".tmp")
         FileOutputStream(temp).use { out.compress(Bitmap.CompressFormat.JPEG, 98, it) }
         if (!temp.renameTo(target)) { temp.copyTo(target, overwrite = true); temp.delete() }
         bg.recycle(); out.recycle()
@@ -349,7 +354,16 @@ class PosterCacheProvider : ContentProvider() {
         } finally { c.disconnect() }
     }
 
+    /** The provider is exported, so only plain http(s) image URLs may be fetched on a caller's behalf. */
+    private fun requireHttpUrl(value: String) {
+        val scheme = runCatching { Uri.parse(value).scheme?.lowercase() }.getOrNull()
+        if (scheme != "http" && scheme != "https") throw java.io.FileNotFoundException("Unsupported image URL")
+    }
+
     private fun prune(dir: File, keep: String) {
+        // Remove temporary files left behind by interrupted downloads or renders.
+        val now = System.currentTimeMillis()
+        dir.listFiles()?.filter { it.isFile && it.extension == "tmp" && now - it.lastModified() > 10 * 60 * 1000L }?.forEach { it.delete() }
         val files = dir.listFiles()?.filter { it.isFile && it.extension == "img" }?.sortedBy { it.lastModified() } ?: return
         var total = files.sumOf { it.length() }
         for (f in files) {
