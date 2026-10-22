@@ -86,7 +86,7 @@ class MainActivity : Activity() {
         header.addView(label("NUVIO  /  RELAY", 12, Color.rgb(94, 190, 255), true))
         header.addView(label("Nuvio Relay", 32, Color.WHITE, true))
         header.addView(label("Make your Google TV home screen yours.", 17, Color.rgb(205, 216, 232)))
-        header.addView(label("Choose catalogs, keep Continue Watching fresh, and open titles directly in Nuvio Re-Shaped.", 14, Color.rgb(153, 170, 192)))
+        header.addView(label("Choose catalogs, keep Continue Watching fresh, and open titles directly in Nuvio.", 14, Color.rgb(153, 170, 192)))
         root.addView(header, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(20) })
         controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -97,7 +97,7 @@ class MainActivity : Activity() {
         controls.addView(label("CONNECT", 13, Color.rgb(94, 190, 255), true))
         val connectButton = button("Connect", action = { connectToNuvio() }).apply { id = View.generateViewId() }
         controls.addView(label("ADD-ON SETUP GUIDE", 14, Color.WHITE, true))
-        controls.addView(label("1. Open Nuvio Re-Shaped on this TV.", 13, Color.rgb(205, 216, 232)))
+        controls.addView(label("1. Open Nuvio (NuvioTV or Re-Shaped) on this TV.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("2. Go to Add-ons → Manage from phone (QR).", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("3. Keep the QR / phone-management screen open.", 13, Color.rgb(205, 216, 232)))
         controls.addView(label("4. Return here and select Connect.", 13, Color.rgb(205, 216, 232)))
@@ -304,7 +304,7 @@ class MainActivity : Activity() {
         }
         root.addView(catalogPanel, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
         catalogPanel.addView(label("CATALOG LIBRARY", 16, Color.WHITE, true))
-        catalogPanel.addView(label("Catalogs from Nuvio Re-Shaped appear here.", 14, Color.rgb(153, 170, 192)))
+        catalogPanel.addView(label("Catalogs from your Nuvio add-ons appear here.", 14, Color.rgb(153, 170, 192)))
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         catalogPanel.addView(list)
         status = label("Ready · waiting for connection", 14, Color.rgb(130, 220, 180), true).apply {
@@ -312,7 +312,7 @@ class MainActivity : Activity() {
             background = rounded(Color.rgb(18, 43, 42), 10)
         }
         root.addView(status, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
-        root.addView(label("Nuvio Re-Shaped is not modified by this app.", 12, Color.rgb(130, 145, 164)))
+        root.addView(label("Nuvio is not modified by this app.", 12, Color.rgb(130, 145, 164)))
         // Start at the top of the action chain. Focusing the token field on launch
         // trapped DOWN navigation below the manual controls on TV remotes.
         connectButton.post {
@@ -327,7 +327,7 @@ class MainActivity : Activity() {
     }
 
     private fun connectToNuvio() {
-        message("Looking for Nuvio Re-Shaped local add-on server…")
+        message("Looking for the Nuvio local add-on server…")
         worker.execute {
             var connectedPort: Int? = null
             var addonArray: JSONArray? = null
@@ -341,7 +341,7 @@ class MainActivity : Activity() {
             val arr = addonArray
             if (connectedPort == null || arr == null) {
                 runOnUiThread {
-                    message("Nuvio Re-Shaped server not found. Open Nuvio Re-Shaped > Add-ons > Manage from phone (QR), keep that screen open, then retry.")
+                    message("Nuvio add-on server not found. Open Nuvio (NuvioTV or Re-Shaped) > Add-ons > Manage from phone (QR), keep that screen open, then retry.")
                 }
                 return@execute
             }
@@ -363,7 +363,7 @@ class MainActivity : Activity() {
                     } catch (_: Exception) { }
                 }
                 if (importedUrls.isEmpty()) {
-                    runOnUiThread { message("Connected to Nuvio Re-Shaped on port " + connectedPort + ", but it returned no installed add-ons.") }
+                    runOnUiThread { message("Connected to Nuvio on port " + connectedPort + ", but it returned no installed add-ons.") }
                     return@execute
                 }
                 addons.clear()
@@ -398,7 +398,7 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
-        if (addons.isEmpty()) { render(); message("Connect to Nuvio Re-Shaped or add a manifest URL."); return }
+        if (addons.isEmpty()) { render(); message("Connect to Nuvio or add a manifest URL."); return }
         worker.execute {
             val urls = addons.toList()
             val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
@@ -559,7 +559,7 @@ class MainActivity : Activity() {
 
     private fun refreshAddonsManually() {
         if (refreshingAddons) { message("Add-on refresh is already running."); return }
-        if (addons.isEmpty()) { refreshAddonsState?.text = "Status: No add-ons connected"; message("Connect to Nuvio Re-Shaped first."); return }
+        if (addons.isEmpty()) { refreshAddonsState?.text = "Status: No add-ons connected"; message("Connect to Nuvio first."); return }
         refreshingAddons = true
         refreshAddonsButton?.text = "Refresh Add-ons  ·  RUNNING…"
         refreshAddonsState?.text = "Status: Fetching latest manifests…"
