@@ -30,13 +30,29 @@ jobs:
       - name: Read app version
         id: ver
         run: echo "name=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | head -1 | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
-      - name: Build debug APK
+      - name: Prepare signing key
+        env:
+          RELAY_KEYSTORE_BASE64: ${{ secrets.RELAY_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$RELAY_KEYSTORE_BASE64" ]; then
+            echo "::error::RELAY_KEYSTORE_BASE64 secret is missing; refusing to publish an APK that cannot update the installed app."
+            exit 1
+          fi
+          echo "$RELAY_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/relay-release.jks"
+          echo "RELAY_KEYSTORE_FILE=$RUNNER_TEMP/relay-release.jks" >> "$GITHUB_ENV"
+      - name: Build APK
+        env:
+          RELAY_KEYSTORE_PASSWORD: ${{ secrets.RELAY_KEYSTORE_PASSWORD }}
+          RELAY_KEY_ALIAS: ${{ secrets.RELAY_KEY_ALIAS }}
+          RELAY_KEY_PASSWORD: ${{ secrets.RELAY_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleDebug
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "nuvio-tv-relay-v${{ steps.ver.outputs.name }}.apk"
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nuvio-tv-relay-v${{ steps.ver.outputs.name }}-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: nuvio-tv-relay-v${{ steps.ver.outputs.name }}.apk
           if-no-files-found: error
           retention-days: 14
       - name: Publish GitHub Release
@@ -46,4 +62,4 @@ jobs:
           name: Nuvio TV Relay v${{ steps.ver.outputs.name }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          files: app/build/outputs/apk/debug/*.apk
+          files: nuvio-tv-relay-v${{ steps.ver.outputs.name }}.apk
